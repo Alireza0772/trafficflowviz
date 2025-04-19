@@ -1,0 +1,16 @@
+{
+    "files.associations": {
+        "iostream": "cpp",
+        "chrono": "cpp",
+        "cmath": "cpp",
+        "*.ipp": "cpp"
+    },
+    // Auto‑select Ninja generator and arm64 clang
+    "cmake.generator": "Ninja",
+    "cmake.configureSettings": {
+        "CMAKE_OSX_ARCHITECTURES": "arm64"
+    },
+    // Use clang‑format on save
+    "editor.formatOnSave": true,
+    "C_Cpp.clang_format_style": "file"
+}

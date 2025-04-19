@@ -1,0 +1,60 @@
+{
+  "version": "2.0.0",
+  "options": {
+    "cwd": "${workspaceFolder}"
+  },
+  "tasks": [
+    /* --- Format‑all task ------------------------------------------------- */
+    {
+      "label": "Format C++ Sources",
+      "type": "shell",
+      "command": "clang-format --verbose --style='file' -i $(git ls-files '*.cpp' '*.hpp')",
+      "presentation": {
+        "reveal": "never"
+      },
+      "problemMatcher": [
+        "$gcc"
+      ]
+    },
+    /* --- Build tasks (now depend on format) ----------------------------- */
+    {
+      "label": "Build (Debug)",
+      "type": "shell",
+      "command": "./build.sh",
+      "dependsOn": "Format C++ Sources",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": [
+        "$gcc"
+      ]
+    },
+    {
+      "label": "Build (Release)",
+      "type": "shell",
+      "command": "./build.sh release",
+      "dependsOn": "Format C++ Sources",
+      "problemMatcher": [
+        "$gcc"
+      ]
+    },
+    /* --- Clean ---------------------------------------------------------- */
+    {
+      "label": "Clean",
+      "type": "shell",
+      "command": "./clean.sh"
+    },
+    /* --- Run ------------------------------------------------------------ */
+    {
+      "label": "Run",
+      "type": "shell",
+      "command": "${workspaceFolder}/build/bin/trafficviz",
+      "dependsOn": "Build (Debug)",
+      "group": "test",
+      "presentation": {
+        "reveal": "always"
+      }
+    }
+  ]
+}

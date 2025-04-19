@@ -1,0 +1,22 @@
+# TrafficFlowViz pre‑commit hooks
+repos:
+  - repo: https://github.com/llvm/llvm-project
+    rev: llvmorg-17.0.4
+    hooks:
+      - id: clang-format
+        name: clang‑format (file)
+        entry: clang-format -i
+        language: system
+        stages: [pre-commit]
+        types: [c, c++]
+        args: ["--style='file'"]
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+  - repo: https://github.com/cpplint/cpplint
+    rev: v1.6.1
+    hooks:
+      - id: cpplint
+        args: ["--extensions=cpp,hpp"]
