@@ -1,6 +1,7 @@
 #ifndef TFV_ROAD_NETWORK_HPP
 #define TFV_ROAD_NETWORK_HPP
 
+#include "core/TrafficEntity.hpp"
 #include <filesystem>
 #include <queue>
 #include <unordered_map>
@@ -26,6 +27,8 @@ namespace tfv
     class RoadNetwork
     {
       public:
+        RoadNetwork();
+
         /** Clear and load from CSV; returns true on success. */
         bool loadCSV(const std::filesystem::path& path);
 
@@ -41,9 +44,34 @@ namespace tfv
          * node. */
         std::vector<uint32_t> route(uint32_t src, uint32_t dst) const;
 
+        /** Get a segment by ID (null if not found) */
+        RoadSegment* getSegment(uint32_t segmentId);
+
+        /** Get a segment by ID (null if not found) - const version */
+        const RoadSegment* getSegment(uint32_t segmentId) const;
+
+        /** Get a node by ID (null if not found) */
+        Node* getNode(uint32_t nodeId);
+
+        /** Get a node by ID (null if not found) - const version */
+        const Node* getNode(uint32_t nodeId) const;
+
+        /** Get all segment IDs in the network */
+        std::vector<uint32_t> getSegmentIds() const;
+
+        /** Add a new segment to the network */
+        void addSegment(const RoadSegment& segment);
+
+        /** Add a new node to the network */
+        void addNode(const Node& node);
+
       private:
         std::vector<RoadVisual> m_seg;
-        std::unordered_map<uint32_t, std::vector<uint32_t>> m_adj; // added adjacency list
+        std::unordered_map<uint32_t, std::vector<uint32_t>> m_adj; // adjacency list
+
+        // Entities in the network
+        std::unordered_map<uint32_t, RoadSegment> m_segments;
+        std::unordered_map<uint32_t, Node> m_nodes;
     };
 
 } // namespace tfv

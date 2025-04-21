@@ -12,5 +12,7 @@
     },
     // Use clang‑format on save
     "editor.formatOnSave": true,
-    "C_Cpp.clang_format_style": "file"
+    "C_Cpp.clang_format_style": "file",
+    "terminal.integrated.shellIntegration.enabled": false,
+    "terminal.integrated.defaultProfile.osx": "zsh"
 }

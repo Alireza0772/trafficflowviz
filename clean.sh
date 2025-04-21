@@ -1,4 +1,8 @@
-#!/usr/bin/env bash
-set -euo pipefail
-rm -rf build
-echo "build/ directory removed."
+#!/bin/bash
+set -e
+
+# Clean build directories
+rm -rf build/
+rm -rf install/
+
+echo "Cleaned build and install directories."

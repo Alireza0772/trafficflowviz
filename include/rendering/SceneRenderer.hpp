@@ -3,9 +3,9 @@
 
 #include <cmath>
 
-#include "Renderer.hpp"
-#include "RoadNetwork.hpp"
-#include "Simulation.hpp"
+#include "core/RoadNetwork.hpp"
+#include "core/Simulation.hpp"
+#include "rendering/Renderer.hpp"
 
 namespace tfv
 {

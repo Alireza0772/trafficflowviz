@@ -1,12 +1,17 @@
 #include <pybind11/pybind11.h>
 
-#include <memory>
+#include "core/Engine.hpp"
 
-#include "Engine.hpp"
 namespace py = pybind11;
-PYBIND11_MODULE(trafficviz, m)
+
+PYBIND11_MODULE(trafficflowviz, m)
 {
-    py::class_<tfv::Engine, std::shared_ptr<tfv::Engine>>(m, "Engine")
+    m.doc() = "TrafficFlowViz Python bindings";
+
+    py::class_<tfv::Engine>(m, "Engine")
         .def(py::init<const std::string&, int, int>())
-        .def("run", &tfv::Engine::run);
+        .def("init", &tfv::Engine::init)
+        .def("run", &tfv::Engine::run)
+        .def("set_csv", &tfv::Engine::setCSV)
+        .def("set_road_csv", &tfv::Engine::setRoadCSV);
 }
