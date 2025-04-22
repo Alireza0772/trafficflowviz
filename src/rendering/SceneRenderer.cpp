@@ -64,18 +64,17 @@ namespace tfv
             auto b1 = toScreen(x1 - nx * half, y1 - ny * half);
             auto b2 = toScreen(x2 - nx * half, y2 - ny * half);
 
-            // Use anti-aliased lines if enabled
-            if(m_antiAliasing)
-            {
-                m_r->drawAALine(a1.first, a1.second, a2.first, a2.second);
-                m_r->drawAALine(b1.first, b1.second, b2.first, b2.second);
-            }
-            else
-            {
-                m_r->drawLine(a1.first, a1.second, a2.first, a2.second);
-                m_r->drawLine(b1.first, b1.second, b2.first, b2.second);
-            }
+            // Calculate the road width in pixels
+            float roadWidthPx = roadWidth * m_scale;
 
+            // Set color for roads
+            m_r->setColor(200, 200, 200, 255);
+
+            // Draw the road edges
+            m_r->drawLine(a1.first, a1.second, a2.first, a2.second, 2);
+            m_r->drawLine(b1.first, b1.second, b2.first, b2.second, 2);
+
+            // Draw center line
             m_r->setColor(140, 140, 140, 255);
             drawDashedLine(a1.first, a1.second, b1.first, b1.second);
         }
@@ -91,21 +90,20 @@ namespace tfv
         float vx = dx / dist, vy = dy / dist;
         float cx = static_cast<float>(x1), cy = static_cast<float>(y1);
         int segments = static_cast<int>(dist / (dashLen + gapLen));
+
+        // Make sure the dashed line is visible with proper thickness
+        int thickness = std::max(1, static_cast<int>(m_scale / 4.0f));
+
         for(int i = 0; i < segments; ++i)
         {
-            // Use anti-aliased lines if enabled
-            if(m_antiAliasing)
-            {
-                m_r->drawAALine(static_cast<int>(cx), static_cast<int>(cy),
-                                static_cast<int>(cx + vx * dashLen),
-                                static_cast<int>(cy + vy * dashLen));
-            }
-            else
-            {
-                m_r->drawLine(static_cast<int>(cx), static_cast<int>(cy),
-                              static_cast<int>(cx + vx * dashLen),
-                              static_cast<int>(cy + vy * dashLen));
-            }
+            int startX = static_cast<int>(cx);
+            int startY = static_cast<int>(cy);
+            int endX = static_cast<int>(cx + vx * dashLen);
+            int endY = static_cast<int>(cy + vy * dashLen);
+
+            // Draw line with proper thickness
+            m_r->drawLine(startX, startY, endX, endY, thickness);
+
             cx += vx * (dashLen + gapLen);
             cy += vy * (dashLen + gapLen);
         }
@@ -115,6 +113,8 @@ namespace tfv
                                      bool antiAliasing)
         : m_r(renderer), m_panX(panX), m_panY(panY), m_scale(scale), m_antiAliasing(antiAliasing)
     {
+        // Set anti-aliasing on the renderer
+        m_r->setAntiAliasing(antiAliasing);
     }
 
     void VehicleRenderer::draw(const VehicleMap& vehicles, const RoadNetwork* const net)
@@ -139,45 +139,37 @@ namespace tfv
             float wy = y1 + uy * (len * t);
             int sx = static_cast<int>(wx * m_scale) + m_panX;
             int sy = static_cast<int>(wy * m_scale) + m_panY;
-            m_r->setColor(0, 200, 0, 255);
+
+            // Vehicle color - different green shade than heatmap
+            m_r->setColor(50, 200, 50, 255);
+
             if(m_scale < 2.0f)
             {
+                // At very low zoom levels, just draw a point
                 m_r->drawPoint(sx, sy);
             }
             else
             {
-                int arrowLen = static_cast<int>(5 * m_scale);
+                // Calculate appropriate arrow size based on scale
+                int arrowLen = std::max(3, static_cast<int>(5 * m_scale));
+                int arrowWidth = std::max(1, static_cast<int>(m_scale / 2));
+
                 int ex = sx + static_cast<int>(ux * arrowLen);
                 int ey = sy + static_cast<int>(uy * arrowLen);
 
-                // Use anti-aliased lines if enabled
-                if(m_antiAliasing)
-                {
-                    m_r->drawAALine(sx, sy, ex, ey);
-                }
-                else
-                {
-                    m_r->drawLine(sx, sy, ex, ey);
-                }
+                // Draw line with proper thickness
+                m_r->drawLine(sx, sy, ex, ey, arrowWidth);
 
                 // Draw arrowhead
                 float nx = -uy, ny = ux; // normal vector
-                int ax1 = ex - static_cast<int>((ux * 8 + nx * 4) * m_scale);
-                int ay1 = ey - static_cast<int>((uy * 8 + ny * 4) * m_scale);
-                int ax2 = ex - static_cast<int>((ux * 8 - nx * 4) * m_scale);
-                int ay2 = ey - static_cast<int>((uy * 8 - ny * 4) * m_scale);
+                int ax1 = ex - static_cast<int>((ux * arrowLen * 0.5f + nx * arrowLen * 0.3f));
+                int ay1 = ey - static_cast<int>((uy * arrowLen * 0.5f + ny * arrowLen * 0.3f));
+                int ax2 = ex - static_cast<int>((ux * arrowLen * 0.5f - nx * arrowLen * 0.3f));
+                int ay2 = ey - static_cast<int>((uy * arrowLen * 0.5f - ny * arrowLen * 0.3f));
 
-                // Use anti-aliased lines if enabled
-                if(m_antiAliasing)
-                {
-                    m_r->drawAALine(ex, ey, ax1, ay1);
-                    m_r->drawAALine(ex, ey, ax2, ay2);
-                }
-                else
-                {
-                    m_r->drawLine(ex, ey, ax1, ay1);
-                    m_r->drawLine(ex, ey, ax2, ay2);
-                }
+                // Draw arrowhead lines
+                m_r->drawLine(ex, ey, ax1, ay1, arrowWidth);
+                m_r->drawLine(ex, ey, ax2, ay2, arrowWidth);
             }
         }
     }

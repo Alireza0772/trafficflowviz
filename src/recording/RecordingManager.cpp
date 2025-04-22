@@ -5,10 +5,23 @@
 #include <iostream>
 #include <sstream>
 
+// Define the Surface struct to bridge with SDL
 namespace tfv
 {
-    RecordingManager::RecordingManager(SDL_Renderer* renderer, int width, int height)
-        : m_renderer(renderer), m_width(width), m_height(height)
+    // Forward declaration for Surface implementation
+    struct Surface
+    {
+        void* impl; // Will hold an SDL_Surface*
+
+        ~Surface()
+        {
+            if(impl)
+                SDL_FreeSurface(static_cast<SDL_Surface*>(impl));
+        }
+    };
+
+    RecordingManager::RecordingManager(IRenderer* renderer)
+        : m_renderer(renderer), m_width(0), m_height(0)
     {
         // Initialize SDL_image for saving PNG files
         int imgFlags = IMG_INIT_PNG;
@@ -16,6 +29,12 @@ namespace tfv
         {
             std::cerr << "SDL_image could not initialize! SDL_image Error: " << IMG_GetError()
                       << std::endl;
+        }
+
+        // Get window size from renderer
+        if(m_renderer)
+        {
+            m_renderer->getWindowSize(m_width, m_height);
         }
     }
 
@@ -28,7 +47,7 @@ namespace tfv
         std::lock_guard<std::mutex> lock(m_queueMutex);
         for(auto* surface : m_frameQueue)
         {
-            SDL_FreeSurface(surface);
+            delete surface;
         }
         m_frameQueue.clear();
     }
@@ -40,29 +59,41 @@ namespace tfv
             return false;
         }
 
+        // Get the native SDL renderer
+        SDL_Renderer* sdlRenderer = static_cast<SDL_Renderer*>(m_renderer->getNativeRenderer());
+        if(!sdlRenderer)
+        {
+            std::cerr << "Failed to get native renderer for screenshot" << std::endl;
+            return false;
+        }
+
         // Create an RGB surface to copy the renderer to
-        SDL_Surface* screenshot = SDL_CreateRGBSurface(0, m_width, m_height, 32, 0x00FF0000,
+        SDL_Surface* sdlSurface = SDL_CreateRGBSurface(0, m_width, m_height, 32, 0x00FF0000,
                                                        0x0000FF00, 0x000000FF, 0xFF000000);
-        if(!screenshot)
+        if(!sdlSurface)
         {
             std::cerr << "Failed to create screenshot surface: " << SDL_GetError() << std::endl;
             return false;
         }
 
         // Read pixels from renderer to surface
-        if(SDL_RenderReadPixels(m_renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, screenshot->pixels,
-                                screenshot->pitch) != 0)
+        if(SDL_RenderReadPixels(sdlRenderer, nullptr, SDL_PIXELFORMAT_ARGB8888, sdlSurface->pixels,
+                                sdlSurface->pitch) != 0)
         {
             std::cerr << "Failed to read pixels from renderer: " << SDL_GetError() << std::endl;
-            SDL_FreeSurface(screenshot);
+            SDL_FreeSurface(sdlSurface);
             return false;
         }
+
+        // Create a Surface wrapper
+        Surface* screenshot = new Surface();
+        screenshot->impl = sdlSurface;
 
         // Save the surface to a file
         bool success = saveSurface(screenshot, path);
 
         // Clean up
-        SDL_FreeSurface(screenshot);
+        delete screenshot;
 
         if(success && m_statusCallback)
         {
@@ -101,7 +132,7 @@ namespace tfv
             std::lock_guard<std::mutex> lock(m_queueMutex);
             for(auto* surface : m_frameQueue)
             {
-                SDL_FreeSurface(surface);
+                delete surface;
             }
             m_frameQueue.clear();
         }
@@ -155,23 +186,35 @@ namespace tfv
             return;
         }
 
+        // Get the native SDL renderer
+        SDL_Renderer* sdlRenderer = static_cast<SDL_Renderer*>(m_renderer->getNativeRenderer());
+        if(!sdlRenderer)
+        {
+            std::cerr << "Failed to get native renderer for frame capture" << std::endl;
+            return;
+        }
+
         // Create an RGB surface to copy the renderer to
-        SDL_Surface* frame = SDL_CreateRGBSurface(0, m_width, m_height, 32, 0x00FF0000, 0x0000FF00,
-                                                  0x000000FF, 0xFF000000);
-        if(!frame)
+        SDL_Surface* sdlSurface = SDL_CreateRGBSurface(0, m_width, m_height, 32, 0x00FF0000,
+                                                       0x0000FF00, 0x000000FF, 0xFF000000);
+        if(!sdlSurface)
         {
             std::cerr << "Failed to create frame surface: " << SDL_GetError() << std::endl;
             return;
         }
 
         // Read pixels from renderer to surface
-        if(SDL_RenderReadPixels(m_renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, frame->pixels,
-                                frame->pitch) != 0)
+        if(SDL_RenderReadPixels(sdlRenderer, nullptr, SDL_PIXELFORMAT_ARGB8888, sdlSurface->pixels,
+                                sdlSurface->pitch) != 0)
         {
             std::cerr << "Failed to read pixels from renderer: " << SDL_GetError() << std::endl;
-            SDL_FreeSurface(frame);
+            SDL_FreeSurface(sdlSurface);
             return;
         }
+
+        // Create a Surface wrapper
+        Surface* frame = new Surface();
+        frame->impl = sdlSurface;
 
         // Add the frame to the queue
         {
@@ -180,15 +223,15 @@ namespace tfv
         }
     }
 
-    bool RecordingManager::saveSurface(SDL_Surface* surface, const std::string& path)
+    bool RecordingManager::saveSurface(Surface* surface, const std::string& path)
     {
-        if(!surface)
+        if(!surface || !surface->impl)
         {
             return false;
         }
 
         // Save the surface to a PNG file
-        if(IMG_SavePNG(surface, path.c_str()) != 0)
+        if(IMG_SavePNG(static_cast<SDL_Surface*>(surface->impl), path.c_str()) != 0)
         {
             std::cerr << "Failed to save PNG: " << IMG_GetError() << std::endl;
             return false;
@@ -204,7 +247,7 @@ namespace tfv
 
         while(m_threadRunning)
         {
-            std::vector<SDL_Surface*> framesToProcess;
+            std::vector<Surface*> framesToProcess;
 
             // Get frames from the queue
             {
@@ -227,7 +270,7 @@ namespace tfv
                 saveSurface(frame, framePath.str());
 
                 // Clean up
-                SDL_FreeSurface(frame);
+                delete frame;
             }
 
             // Sleep to reduce CPU usage

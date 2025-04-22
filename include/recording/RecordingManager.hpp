@@ -1,7 +1,6 @@
 #ifndef TFV_RECORDING_MANAGER_HPP
 #define TFV_RECORDING_MANAGER_HPP
 
-#include <SDL2/SDL.h>
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -10,15 +9,20 @@
 #include <thread>
 #include <vector>
 
+#include "rendering/Renderer.hpp"
+
 namespace tfv
 {
+    // Forward declarations
+    struct Surface;
+
     /**
      * Manages the recording and export of video/images from the traffic visualization
      */
     class RecordingManager
     {
       public:
-        RecordingManager(SDL_Renderer* renderer, int width, int height);
+        RecordingManager(IRenderer* renderer);
         ~RecordingManager();
 
         /**
@@ -60,12 +64,12 @@ namespace tfv
 
       private:
         // Save a surface to a PNG file
-        bool saveSurface(SDL_Surface* surface, const std::string& path);
+        bool saveSurface(Surface* surface, const std::string& path);
 
         // Process thread that saves frames to disk
         void processFrames();
 
-        SDL_Renderer* m_renderer;
+        IRenderer* m_renderer;
         int m_width;
         int m_height;
 
@@ -76,7 +80,7 @@ namespace tfv
         int m_fps{30};
 
         // Frame queue for video recording
-        std::vector<SDL_Surface*> m_frameQueue;
+        std::vector<Surface*> m_frameQueue;
         std::mutex m_queueMutex;
         std::thread m_processThread;
 

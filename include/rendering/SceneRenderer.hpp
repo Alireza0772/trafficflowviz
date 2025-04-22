@@ -18,6 +18,11 @@ namespace tfv
             : m_r(renderer), m_panX(panX), m_panY(panY), m_scale(scale), roadWidth{10.f},
               dashed{false}, m_antiAliasing{antiAliasing}
         {
+            // Apply anti-aliasing setting to the renderer
+            if(m_r)
+            {
+                m_r->setAntiAliasing(antiAliasing);
+            }
         }
         void draw(const RoadNetwork* net);
         void setAntiAliasing(bool enable) { m_antiAliasing = enable; }
@@ -75,7 +80,14 @@ namespace tfv
         void render();
 
         /** Enable/disable anti-aliased drawing */
-        void setAntiAliasing(bool enable) { m_antiAliasing = enable; }
+        void setAntiAliasing(bool enable)
+        {
+            m_antiAliasing = enable;
+            if(m_r)
+            {
+                m_r->setAntiAliasing(enable);
+            }
+        }
 
         float getZoom() const { return m_scale; }
         int getPanX() const { return m_panX; }

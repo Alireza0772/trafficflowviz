@@ -1,8 +1,6 @@
 #ifndef TFV_ENGINE_HPP
 #define TFV_ENGINE_HPP
 
-#include <SDL2/SDL.h>
-
 #include <functional>
 #include <memory>
 #include <string>
@@ -28,7 +26,7 @@ namespace tfv
     class Engine
     {
       public:
-        Engine(const std::string& title, int w, int h);
+        Engine(const std::string& title, int w, int h, const std::string& rendererType = "SDL");
         ~Engine();
 
         /** Override default CSV path before init(). */
@@ -46,6 +44,8 @@ namespace tfv
         void toggleLiveFeed(bool enable);
         void toggleAlerts(bool enable);
         void toggleImGui(bool enable);
+        /** Toggle anti-aliasing flag (for UI consistency only - anti-aliasing is always enabled in
+         * the renderer) */
         void toggleAntiAliasing(bool enable);
         void toggleKeybindingsWindow(bool enable);
 
@@ -73,7 +73,8 @@ namespace tfv
         // window / renderer
         std::string m_title;
         int m_w, m_h;
-        SDL_Window* m_window{nullptr};
+        void* m_window{nullptr};
+        std::string m_rendererType;
         tfv::IRenderer* m_renderer{nullptr};
 
         // timing
