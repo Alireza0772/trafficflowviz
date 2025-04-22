@@ -27,12 +27,25 @@ namespace tfv
         ImGuiIO& io = ImGui::GetIO();
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
 
-        // Commenting out features that may not be available in the current ImGui version
-        // io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;     // Enable Docking
-        // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;   // Enable Multi-Viewport
+        // Enable docking and multi-viewport support
+        io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;   // Enable Docking
+        io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // Enable Multi-Viewport
+
+        // Configure docking
+        io.ConfigDockingWithShift = false;      // Enable docking without shift
+        io.ConfigWindowsResizeFromEdges = true; // Enable resizing from edges
 
         // Setup Dear ImGui style
         ImGui::StyleColorsDark();
+
+        // When viewports are enabled we tweak WindowRounding/WindowBg so platform windows can look
+        // identical to regular ones
+        ImGuiStyle& style = ImGui::GetStyle();
+        if(io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+        {
+            style.WindowRounding = 0.0f;
+            style.Colors[ImGuiCol_WindowBg].w = 1.0f;
+        }
 
         // Setup Platform/Renderer backends
         ImGui_ImplSDL2_InitForSDLRenderer(m_window, m_renderer);
@@ -57,8 +70,6 @@ namespace tfv
         // Pass the renderer explicitly as required by the function signature
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), m_renderer);
 
-        // Commenting out multi-viewport handling as it may not be available
-        /*
         // Update and Render additional Platform Windows
         ImGuiIO& io = ImGui::GetIO();
         if(io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
@@ -69,7 +80,6 @@ namespace tfv
             ImGui::RenderPlatformWindowsDefault();
             SDL_GL_MakeCurrent(backup_current_window, backup_current_context);
         }
-        */
     }
 
     void ImGuiRenderer::processEvent(const SDL_Event& event)

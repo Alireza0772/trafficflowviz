@@ -108,6 +108,9 @@ namespace tfv
 
         // UI callback for alerts
         AlertUICallback m_alertUICallback;
+
+        // ImGui helper functions
+        static void HelpMarker(const char* desc);
     };
 
 } // namespace tfv

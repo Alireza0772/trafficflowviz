@@ -285,18 +285,234 @@ namespace tfv
         {
             m_imguiRenderer->beginFrame();
 
-            // Show keybindings window by default
-            m_showKeybindings = true;
-            m_imguiRenderer->showKeybindingsWindow(&m_showKeybindings);
+            // Create main dockspace
+            static bool dockspaceOpen = true;
+            static bool opt_fullscreen = true;
+            static ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_None;
 
-            // Add any additional ImGui UI here
-            // FPS display
-            ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
-            ImGui::SetNextWindowSize(ImVec2(170, 70), ImGuiCond_FirstUseEver);
+            // We are using the ImGuiWindowFlags_NoDocking flag to make the parent window not
+            // dockable into, because it would be confusing to have two docking targets within each
+            // others.
+            ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
+            if(opt_fullscreen)
+            {
+                const ImGuiViewport* viewport = ImGui::GetMainViewport();
+                ImGui::SetNextWindowPos(viewport->WorkPos);
+                ImGui::SetNextWindowSize(viewport->WorkSize);
+                ImGui::SetNextWindowViewport(viewport->ID);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+                window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+                                ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+                window_flags |=
+                    ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+            }
+
+            // When using ImGuiDockNodeFlags_PassthruCentralNode, DockSpace() will render our
+            // background and handle the pass-thru hole, so we ask Begin() to not render a
+            // background.
+            if(dockspace_flags & ImGuiDockNodeFlags_PassthruCentralNode)
+                window_flags |= ImGuiWindowFlags_NoBackground;
+
+            // Important: note that we proceed even if Begin() returns false (aka window is
+            // collapsed). This is because we want to keep our DockSpace() active. If a DockSpace()
+            // is inactive, all active windows docked into it will lose their parent and become
+            // undocked.
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+            ImGui::Begin("DockSpace Demo", &dockspaceOpen, window_flags);
+            ImGui::PopStyleVar();
+
+            if(opt_fullscreen)
+                ImGui::PopStyleVar(2);
+
+            // Submit the DockSpace
+            ImGuiIO& io = ImGui::GetIO();
+            if(io.ConfigFlags & ImGuiConfigFlags_DockingEnable)
+            {
+                ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
+                ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
+            }
+
+            // Add menu bar
+            if(ImGui::BeginMenuBar())
+            {
+                if(ImGui::BeginMenu("File"))
+                {
+                    if(ImGui::MenuItem("Exit", "Esc"))
+                    {
+                        m_running = false;
+                    }
+                    ImGui::EndMenu();
+                }
+
+                if(ImGui::BeginMenu("View"))
+                {
+                    ImGui::MenuItem("Keybindings", nullptr, &m_showKeybindings);
+                    ImGui::MenuItem("Heatmap", "H", &m_showHeatmap);
+                    ImGui::MenuItem("Anti-aliasing", "G", &m_antiAliasingEnabled);
+                    if(ImGui::MenuItem("Toggle ImGui", "I"))
+                    {
+                        toggleImGui(!m_imguiEnabled);
+                    }
+                    ImGui::EndMenu();
+                }
+
+                if(ImGui::BeginMenu("Features"))
+                {
+                    ImGui::MenuItem("Live Feed", "L", &m_liveFeedEnabled);
+                    ImGui::MenuItem("Alerts", "A", &m_alertsEnabled);
+                    ImGui::MenuItem("Recording", "R", &m_recordingEnabled);
+                    ImGui::EndMenu();
+                }
+
+                ImGui::EndMenuBar();
+            }
+
+            // Show keybindings window as a dockable window
+            if(m_showKeybindings)
+            {
+                m_imguiRenderer->showKeybindingsWindow(&m_showKeybindings);
+            }
+
+            // FPS and stats panel
             ImGui::Begin("Stats", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
             ImGui::Text("FPS: %d", m_fps);
             ImGui::Text("Vehicle count: %zu", vehicles.size());
             ImGui::End();
+
+            // Alerts panel
+            if(m_alertsEnabled && m_alertManager)
+            {
+                ImGui::Begin("Alerts", nullptr);
+
+                // Get active alerts
+                auto alerts = m_alertManager->getActiveAlerts();
+
+                if(alerts.empty())
+                {
+                    ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.0f, 1.0f), "No active alerts");
+                }
+                else
+                {
+                    // Display each alert
+                    for(size_t i = 0; i < alerts.size(); i++)
+                    {
+                        const auto& alert = alerts[i];
+
+                        // Set color based on alert type
+                        ImVec4 color;
+                        switch(alert.type)
+                        {
+                        case AlertType::CONGESTION:
+                            color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f); // Red
+                            break;
+                        case AlertType::SPEED_VIOLATION:
+                            color = ImVec4(1.0f, 0.8f, 0.0f, 1.0f); // Orange
+                            break;
+                        case AlertType::UNUSUAL_SLOWDOWN:
+                            color = ImVec4(1.0f, 1.0f, 0.0f, 1.0f); // Yellow
+                            break;
+                        case AlertType::INCIDENT:
+                            color = ImVec4(1.0f, 0.0f, 0.0f, 1.0f); // Bright red
+                            break;
+                        default:
+                            color = ImVec4(1.0f, 1.0f, 1.0f, 1.0f); // White
+                        }
+
+                        ImGui::PushStyleColor(ImGuiCol_Text, color);
+                        ImGui::Text("%s", alert.message.c_str());
+                        ImGui::PopStyleColor();
+
+                        ImGui::SameLine();
+                        std::string btnId = "Acknowledge##" + std::to_string(i);
+                        if(ImGui::Button(btnId.c_str()))
+                        {
+                            m_alertManager->acknowledgeAlert(i);
+                        }
+
+                        // Add a line between alerts
+                        if(i < alerts.size() - 1)
+                        {
+                            ImGui::Separator();
+                        }
+                    }
+                }
+
+                ImGui::End();
+            }
+
+            // Control Panel
+            ImGui::Begin("Control Panel");
+
+            if(ImGui::CollapsingHeader("Alert Thresholds", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                static float congestionThreshold = 0.7f;
+                static float speedViolationThreshold = 1.5f;
+                static float unusualSlowdownThreshold = 0.5f;
+                static float incidentThreshold = 0.8f;
+
+                // Congestion threshold (0.0-1.0)
+                if(ImGui::SliderFloat("Congestion", &congestionThreshold, 0.0f, 1.0f, "%.2f"))
+                {
+                    m_sim.setAlertThreshold(AlertType::CONGESTION, congestionThreshold);
+                }
+                ImGui::SameLine();
+                ImGui::HelpMarker("Threshold for traffic congestion (0-1)");
+
+                // Speed violation threshold (1.0-2.0)
+                if(ImGui::SliderFloat("Speed Violation", &speedViolationThreshold, 1.0f, 2.0f,
+                                      "%.2f"))
+                {
+                    m_sim.setAlertThreshold(AlertType::SPEED_VIOLATION, speedViolationThreshold);
+                }
+                ImGui::SameLine();
+                ImGui::HelpMarker("Multiplier above speed limit to trigger alert");
+
+                // Unusual slowdown threshold (0.0-1.0)
+                if(ImGui::SliderFloat("Unusual Slowdown", &unusualSlowdownThreshold, 0.0f, 1.0f,
+                                      "%.2f"))
+                {
+                    m_sim.setAlertThreshold(AlertType::UNUSUAL_SLOWDOWN, unusualSlowdownThreshold);
+                }
+                ImGui::SameLine();
+                ImGui::HelpMarker("Fraction of normal speed to trigger alert");
+
+                // Incident threshold (0.0-1.0)
+                if(ImGui::SliderFloat("Incident", &incidentThreshold, 0.0f, 1.0f, "%.2f"))
+                {
+                    m_sim.setAlertThreshold(AlertType::INCIDENT, incidentThreshold);
+                }
+                ImGui::SameLine();
+                ImGui::HelpMarker("Sudden speed drop fraction to trigger alert");
+            }
+
+            if(ImGui::CollapsingHeader("Visualization", ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                // Heatmap toggle
+                bool heatmap = m_showHeatmap;
+                if(ImGui::Checkbox("Show Heatmap", &heatmap))
+                {
+                    toggleHeatmap(heatmap);
+                }
+
+                // Anti-aliasing toggle
+                bool antiAliasing = m_antiAliasingEnabled;
+                if(ImGui::Checkbox("Anti-aliasing", &antiAliasing))
+                {
+                    toggleAntiAliasing(antiAliasing);
+                }
+
+                // Zoom slider
+                float zoom = m_scene->getZoom();
+                if(ImGui::SliderFloat("Zoom", &zoom, 0.1f, 10.0f, "%.1f"))
+                {
+                    m_scene->setZoom(zoom);
+                }
+            }
+
+            ImGui::End();
+
+            ImGui::End(); // End dockspace window
 
             m_imguiRenderer->endFrame();
         }
@@ -478,5 +694,18 @@ namespace tfv
         m_antiAliasingEnabled = enable;
         // Apply change to scene renderer
         m_scene->setAntiAliasing(enable);
+    }
+
+    void Engine::HelpMarker(const char* desc)
+    {
+        ImGui::TextDisabled("(?)");
+        if(ImGui::IsItemHovered())
+        {
+            ImGui::BeginTooltip();
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+            ImGui::TextUnformatted(desc);
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
+        }
     }
 } // namespace tfv
