@@ -7,10 +7,36 @@ namespace tfv
 {
     void SceneRenderer::draw(const VehicleMap& vehicles)
     {
-        RoadRenderer roadR(m_r, m_panX, m_panY, m_scale);
+        RoadRenderer roadR(m_r, m_panX, m_panY, m_scale, m_antiAliasing);
         roadR.draw(m_net);
-        VehicleRenderer vehR(m_r, m_panX, m_panY, m_scale);
+        VehicleRenderer vehR(m_r, m_panX, m_panY, m_scale, m_antiAliasing);
         vehR.draw(vehicles, m_net);
+
+        // Store the snapshot for later renders
+        m_lastSnapshot = vehicles;
+    }
+
+    void SceneRenderer::update(double dt)
+    {
+        // Animation logic can be added here if needed
+    }
+
+    void SceneRenderer::render()
+    {
+        // m_lastSnapshot might be empty if no vehicles have been stored yet
+        // This is just a placeholder implementation - ideally we would get new vehicle data each
+        // frame
+        if(m_lastSnapshot.empty())
+        {
+            // Draw empty roads if no vehicle data
+            RoadRenderer roadR(m_r, m_panX, m_panY, m_scale, m_antiAliasing);
+            roadR.draw(m_net);
+        }
+        else
+        {
+            // Use the latest snapshot
+            draw(m_lastSnapshot);
+        }
     }
 
     void RoadRenderer::draw(const RoadNetwork* net)
@@ -37,8 +63,19 @@ namespace tfv
             auto a2 = toScreen(x2 + nx * half, y2 + ny * half);
             auto b1 = toScreen(x1 - nx * half, y1 - ny * half);
             auto b2 = toScreen(x2 - nx * half, y2 - ny * half);
-            m_r->drawLine(a1.first, a1.second, a2.first, a2.second);
-            m_r->drawLine(b1.first, b1.second, b2.first, b2.second);
+
+            // Use anti-aliased lines if enabled
+            if(m_antiAliasing)
+            {
+                m_r->drawAALine(a1.first, a1.second, a2.first, a2.second);
+                m_r->drawAALine(b1.first, b1.second, b2.first, b2.second);
+            }
+            else
+            {
+                m_r->drawLine(a1.first, a1.second, a2.first, a2.second);
+                m_r->drawLine(b1.first, b1.second, b2.first, b2.second);
+            }
+
             m_r->setColor(140, 140, 140, 255);
             drawDashedLine(a1.first, a1.second, b1.first, b1.second);
         }
@@ -56,15 +93,27 @@ namespace tfv
         int segments = static_cast<int>(dist / (dashLen + gapLen));
         for(int i = 0; i < segments; ++i)
         {
-            m_r->drawLine(static_cast<int>(cx), static_cast<int>(cy),
-                          static_cast<int>(cx + vx * dashLen), static_cast<int>(cy + vy * dashLen));
+            // Use anti-aliased lines if enabled
+            if(m_antiAliasing)
+            {
+                m_r->drawAALine(static_cast<int>(cx), static_cast<int>(cy),
+                                static_cast<int>(cx + vx * dashLen),
+                                static_cast<int>(cy + vy * dashLen));
+            }
+            else
+            {
+                m_r->drawLine(static_cast<int>(cx), static_cast<int>(cy),
+                              static_cast<int>(cx + vx * dashLen),
+                              static_cast<int>(cy + vy * dashLen));
+            }
             cx += vx * (dashLen + gapLen);
             cy += vy * (dashLen + gapLen);
         }
     }
 
-    VehicleRenderer::VehicleRenderer(IRenderer* renderer, int panX, int panY, float scale)
-        : m_r(renderer), m_panX(panX), m_panY(panY), m_scale(scale)
+    VehicleRenderer::VehicleRenderer(IRenderer* renderer, int panX, int panY, float scale,
+                                     bool antiAliasing)
+        : m_r(renderer), m_panX(panX), m_panY(panY), m_scale(scale), m_antiAliasing(antiAliasing)
     {
     }
 
@@ -100,15 +149,35 @@ namespace tfv
                 int arrowLen = static_cast<int>(5 * m_scale);
                 int ex = sx + static_cast<int>(ux * arrowLen);
                 int ey = sy + static_cast<int>(uy * arrowLen);
-                m_r->drawLine(sx, sy, ex, ey);
+
+                // Use anti-aliased lines if enabled
+                if(m_antiAliasing)
+                {
+                    m_r->drawAALine(sx, sy, ex, ey);
+                }
+                else
+                {
+                    m_r->drawLine(sx, sy, ex, ey);
+                }
+
                 // Draw arrowhead
                 float nx = -uy, ny = ux; // normal vector
                 int ax1 = ex - static_cast<int>((ux * 8 + nx * 4) * m_scale);
                 int ay1 = ey - static_cast<int>((uy * 8 + ny * 4) * m_scale);
                 int ax2 = ex - static_cast<int>((ux * 8 - nx * 4) * m_scale);
                 int ay2 = ey - static_cast<int>((uy * 8 - ny * 4) * m_scale);
-                m_r->drawLine(ex, ey, ax1, ay1);
-                m_r->drawLine(ex, ey, ax2, ay2);
+
+                // Use anti-aliased lines if enabled
+                if(m_antiAliasing)
+                {
+                    m_r->drawAALine(ex, ey, ax1, ay1);
+                    m_r->drawAALine(ex, ey, ax2, ay2);
+                }
+                else
+                {
+                    m_r->drawLine(ex, ey, ax1, ay1);
+                    m_r->drawLine(ex, ey, ax2, ay2);
+                }
             }
         }
     }

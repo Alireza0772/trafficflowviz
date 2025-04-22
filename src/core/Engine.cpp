@@ -8,6 +8,8 @@
 #include "data/CSVLoader.hpp"
 #include "recording/RecordingManager.hpp"
 #include "rendering/HeatmapRenderer.hpp"
+#include "rendering/ImGuiRenderer.hpp"
+#include <imgui.h>
 
 namespace tfv
 {
@@ -17,6 +19,7 @@ namespace tfv
     Engine::~Engine()
     {
         // Clean up in reverse order of creation
+        m_imguiRenderer.reset();
         m_recordingManager.reset();
         m_alertManager.reset();
         m_liveFeed.reset();
@@ -57,6 +60,13 @@ namespace tfv
 
         m_renderer = new SDLRenderer(sdlRenderer);
         m_scene = new SceneRenderer(m_renderer);
+
+        // Initialize ImGui
+        m_imguiRenderer = std::make_unique<ImGuiRenderer>(m_window, sdlRenderer);
+        m_imguiRenderer->init();
+
+        // Enable keybindings window by default
+        m_showKeybindings = true;
 
         // Load road network
         m_roads.loadCSV(m_roadPath);
@@ -127,8 +137,15 @@ namespace tfv
 
     void Engine::handleEvents()
     {
-        for(SDL_Event e; SDL_PollEvent(&e);)
+        SDL_Event e;
+        while(SDL_PollEvent(&e))
         {
+            // Process ImGui events first if enabled
+            if(m_imguiEnabled && m_imguiRenderer)
+            {
+                m_imguiRenderer->processEvent(e);
+            }
+
             if(e.type == SDL_QUIT)
                 m_running = false;
 
@@ -177,6 +194,15 @@ namespace tfv
                 case SDLK_r: // Toggle recording
                     toggleRecording(!m_recordingEnabled);
                     break;
+                case SDLK_i: // Toggle ImGui
+                    toggleImGui(!m_imguiEnabled);
+                    break;
+                case SDLK_g: // Toggle anti-aliasing
+                    toggleAntiAliasing(!m_antiAliasingEnabled);
+                    break;
+                case SDLK_k: // Toggle keybindings window
+                    toggleKeybindingsWindow(!m_showKeybindings);
+                    break;
 
                 // Export functions
                 case SDLK_s: // Save screenshot
@@ -198,44 +224,81 @@ namespace tfv
             {
                 float zoom = m_scene->getZoom();
                 if(e.wheel.y > 0)
-                    zoom *= 1.1f;
+                    m_scene->setZoom(zoom * 1.1f);
                 else if(e.wheel.y < 0)
-                    zoom /= 1.1f;
-                m_scene->setZoom(zoom);
+                    m_scene->setZoom(zoom / 1.1f);
             }
         }
     }
 
     void Engine::update(double dt)
     {
-        m_t += dt;
+        // Update simulation
         m_sim.step(dt);
+
+        // Process live data if enabled
+        if(m_liveFeedEnabled && m_liveFeed)
+        {
+            // Note: These should be implemented in LiveFeed class if needed
+            // For now, removed these calls since they don't exist
+            // m_liveFeed->update();
+            // const auto& updates = m_liveFeed->getVehicleUpdates();
+            // for(const auto& update : updates)
+            // {
+            //     m_sim.updateVehicle(update);
+            // }
+        }
+
+        // Process alerts if enabled
+        if(m_alertsEnabled && m_alertManager)
+        {
+            // This should be implemented in AlertManager if needed
+            // m_alertManager->update(dt);
+        }
+
+        // Update scene
+        m_scene->update(dt);
+
+        m_t += dt;
     }
 
     void Engine::render()
     {
-        m_renderer->clear(25, 25, 28, 255);
+        m_renderer->clear(0, 0, 0, 255);
 
-        // Draw base scene (roads and vehicles)
-        m_scene->draw(m_sim.snapshot());
+        // Get current vehicle snapshot from simulation
+        VehicleMap vehicles = m_sim.snapshot();
 
-        // Draw heatmap if enabled
+        // Draw scene contents with the latest vehicle data
+        m_scene->draw(vehicles);
+
+        // Render heatmap if enabled
         if(m_showHeatmap && m_heatmap)
         {
-            m_heatmap->draw(&m_roads, m_sim.getCongestionLevels(), m_scene->getPanX(),
+            // Use existing draw method instead of render
+            m_heatmap->draw(m_scene->getNetwork(), m_sim.getCongestionLevels(), m_scene->getPanX(),
                             m_scene->getPanY(), m_scene->getZoom());
         }
 
-        // Draw FPS counter
-        std::string fpsText = "FPS: " + std::to_string(m_fps);
-        m_renderer->setColor(255, 255, 255, 255);
-        m_renderer->drawText(fpsText, 10, 10);
-
-        // Draw recording indicator if active
-        if(m_recordingEnabled && m_recordingManager && m_recordingManager->isRecording())
+        // Render ImGui if enabled
+        if(m_imguiEnabled && m_imguiRenderer)
         {
-            m_renderer->setColor(255, 0, 0, 255);
-            m_renderer->fillRect(m_w - 30, 10, 20, 20);
+            m_imguiRenderer->beginFrame();
+
+            // Show keybindings window by default
+            m_showKeybindings = true;
+            m_imguiRenderer->showKeybindingsWindow(&m_showKeybindings);
+
+            // Add any additional ImGui UI here
+            // FPS display
+            ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(170, 70), ImGuiCond_FirstUseEver);
+            ImGui::Begin("Stats", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+            ImGui::Text("FPS: %d", m_fps);
+            ImGui::Text("Vehicle count: %zu", vehicles.size());
+            ImGui::End();
+
+            m_imguiRenderer->endFrame();
         }
 
         m_renderer->present();
@@ -400,4 +463,20 @@ namespace tfv
         }
     }
 
+    void Engine::toggleKeybindingsWindow(bool enable)
+    {
+        m_showKeybindings = enable;
+    }
+
+    void Engine::toggleImGui(bool enable)
+    {
+        m_imguiEnabled = enable;
+    }
+
+    void Engine::toggleAntiAliasing(bool enable)
+    {
+        m_antiAliasingEnabled = enable;
+        // Apply change to scene renderer
+        m_scene->setAntiAliasing(enable);
+    }
 } // namespace tfv

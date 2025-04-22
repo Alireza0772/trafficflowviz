@@ -2,6 +2,7 @@
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
+#include <cmath>
 #include <iostream>
 
 namespace tfv
@@ -76,6 +77,141 @@ namespace tfv
             int ox2 = static_cast<int>(x2 + i * vx);
             int oy2 = static_cast<int>(y2 + i * vy);
             SDL_RenderDrawLine(m_sdlRenderer, ox1, oy1, ox2, oy2);
+        }
+    }
+
+    // Implementation of anti-aliased line using Wu's algorithm
+    void SDLRenderer::drawAALine(int x1, int y1, int x2, int y2)
+    {
+        // Get current draw color
+        Uint8 r, g, b, a;
+        SDL_GetRenderDrawColor(m_sdlRenderer, &r, &g, &b, &a);
+
+        // Wu's line algorithm
+        bool steep = abs(y2 - y1) > abs(x2 - x1);
+        if(steep)
+        {
+            std::swap(x1, y1);
+            std::swap(x2, y2);
+        }
+        if(x1 > x2)
+        {
+            std::swap(x1, x2);
+            std::swap(y1, y2);
+        }
+
+        int dx = x2 - x1;
+        int dy = y2 - y1;
+        float gradient = (dx == 0) ? 1.0f : (float)dy / dx;
+
+        // Handle first endpoint
+        float xend = round(x1);
+        float yend = y1 + gradient * (xend - x1);
+        float xgap = 1.0f - fmod(x1 + 0.5f, 1.0f);
+        int xpxl1 = (int)xend;
+        int ypxl1 = (int)yend;
+
+        if(steep)
+        {
+            plotPixel(ypxl1, xpxl1, r, g, b, (1.0f - fmod(yend, 1.0f)) * xgap * a);
+            plotPixel(ypxl1 + 1, xpxl1, r, g, b, fmod(yend, 1.0f) * xgap * a);
+        }
+        else
+        {
+            plotPixel(xpxl1, ypxl1, r, g, b, (1.0f - fmod(yend, 1.0f)) * xgap * a);
+            plotPixel(xpxl1, ypxl1 + 1, r, g, b, fmod(yend, 1.0f) * xgap * a);
+        }
+
+        float intery = yend + gradient;
+
+        // Handle second endpoint
+        xend = round(x2);
+        yend = y2 + gradient * (xend - x2);
+        xgap = fmod(x2 + 0.5f, 1.0f);
+        int xpxl2 = (int)xend;
+        int ypxl2 = (int)yend;
+
+        if(steep)
+        {
+            plotPixel(ypxl2, xpxl2, r, g, b, (1.0f - fmod(yend, 1.0f)) * xgap * a);
+            plotPixel(ypxl2 + 1, xpxl2, r, g, b, fmod(yend, 1.0f) * xgap * a);
+        }
+        else
+        {
+            plotPixel(xpxl2, ypxl2, r, g, b, (1.0f - fmod(yend, 1.0f)) * xgap * a);
+            plotPixel(xpxl2, ypxl2 + 1, r, g, b, fmod(yend, 1.0f) * xgap * a);
+        }
+
+        // Main loop
+        if(steep)
+        {
+            for(int x = xpxl1 + 1; x < xpxl2; x++)
+            {
+                plotPixel((int)intery, x, r, g, b, (1.0f - fmod(intery, 1.0f)) * a);
+                plotPixel((int)intery + 1, x, r, g, b, fmod(intery, 1.0f) * a);
+                intery += gradient;
+            }
+        }
+        else
+        {
+            for(int x = xpxl1 + 1; x < xpxl2; x++)
+            {
+                plotPixel(x, (int)intery, r, g, b, (1.0f - fmod(intery, 1.0f)) * a);
+                plotPixel(x, (int)intery + 1, r, g, b, fmod(intery, 1.0f) * a);
+                intery += gradient;
+            }
+        }
+    }
+
+    void SDLRenderer::drawAALine(int x1, int y1, int x2, int y2, int width)
+    {
+        // For wider anti-aliased lines, we'll draw multiple parallel lines
+        int dx = x2 - x1;
+        int dy = y2 - y1;
+        double length = std::sqrt(dx * dx + dy * dy);
+
+        if(length < 0.0001)
+        {
+            // Handle zero-length line
+            return;
+        }
+
+        double ux = dx / length;
+        double uy = dy / length;
+
+        // Perpendicular unit vector
+        double vx = -uy;
+        double vy = ux;
+
+        // Half-width
+        int hw = width / 2;
+
+        // Draw multiple parallel anti-aliased lines
+        for(int i = -hw; i <= hw; i++)
+        {
+            int ox1 = static_cast<int>(x1 + i * vx);
+            int oy1 = static_cast<int>(y1 + i * vy);
+            int ox2 = static_cast<int>(x2 + i * vx);
+            int oy2 = static_cast<int>(y2 + i * vy);
+            drawAALine(ox1, oy1, ox2, oy2);
+        }
+    }
+
+    // Helper method to plot a pixel with transparency
+    void SDLRenderer::plotPixel(int x, int y, Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+    {
+        if(a < 255)
+        {
+            // Set alpha for blending
+            SDL_SetRenderDrawBlendMode(m_sdlRenderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(m_sdlRenderer, r, g, b, a);
+            SDL_RenderDrawPoint(m_sdlRenderer, x, y);
+            // Reset alpha
+            SDL_SetRenderDrawColor(m_sdlRenderer, r, g, b, 255);
+        }
+        else
+        {
+            SDL_RenderDrawPoint(m_sdlRenderer, x, y);
         }
     }
 
@@ -171,6 +307,12 @@ namespace tfv
     }
     void MetalRenderer::drawLine(int, int, int, int, int)
     { /* TODO: MetalKit draw line */
+    }
+    void MetalRenderer::drawAALine(int, int, int, int)
+    { /* TODO: MetalKit draw anti-aliased line */
+    }
+    void MetalRenderer::drawAALine(int, int, int, int, int)
+    { /* TODO: MetalKit draw anti-aliased line with width */
     }
     void MetalRenderer::drawPoint(int, int)
     { /* TODO: MetalKit draw point */

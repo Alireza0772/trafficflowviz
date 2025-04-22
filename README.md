@@ -10,6 +10,9 @@ export PYTHONPATH=build/python:$PYTHONPATH
 python scripts/rush_hour.py  # drive from Python
 ```
 
+## Controls
+See [KEYBINDINGS.md](KEYBINDINGS.md) for a complete list of keyboard shortcuts and controls.
+
 ## Sample Data Sets
 | file | description |
 |------|-------------|

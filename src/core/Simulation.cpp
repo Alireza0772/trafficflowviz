@@ -139,7 +139,7 @@ namespace tfv
         if(!m_roadNetwork)
             return result;
 
-        for(const auto& segmentId : m_roadNetwork->getSegmentIds())
+        for(uint32_t segmentId : m_roadNetwork->getSegmentIds())
         {
             const auto* segment = m_roadNetwork->getSegment(segmentId);
             if(segment)
@@ -203,8 +203,8 @@ namespace tfv
             return it->second;
         }
 
-        // Default speed limit if not set
-        return 13.9f; // ~50 km/h in m/s
+        // Default speed limit if not specified
+        return 13.9f; // ~50 km/h
     }
 
     void Simulation::setAlertThreshold(AlertType type, float threshold)
@@ -222,90 +222,52 @@ namespace tfv
         if(!segment)
             return;
 
-        // Simple congestion model:
-        // - Each lane can handle X vehicles efficiently
-        // - As vehicles increase beyond that, congestion increases
-        const int VEHICLES_PER_LANE = 5;
-        int capacity = segment->laneCount * VEHICLES_PER_LANE;
+        // Simple congestion model: vehicle count / segment length
+        float capacity = segment->length / 10.0f; // 1 vehicle per 10 meters at max capacity
+        float congestionLevel = static_cast<float>(segment->vehicleCount) / capacity;
 
-        if(segment->vehicleCount <= capacity)
-        {
-            // Linear congestion up to capacity
-            segment->congestionLevel = static_cast<float>(segment->vehicleCount) / capacity;
-        }
-        else
-        {
-            // Exponential congestion beyond capacity
-            float overCapacity = static_cast<float>(segment->vehicleCount - capacity) / capacity;
-            segment->congestionLevel = std::min(1.0f, 0.8f + 0.2f * overCapacity);
-        }
+        // Clamp to 0-1 range
+        congestionLevel = std::max(0.0f, std::min(congestionLevel, 1.0f));
 
-        // Update current speed based on congestion
-        segment->currentSpeed = segment->freeFlowSpeed * (1.0f - 0.8f * segment->congestionLevel);
+        // Update segment congestion level
+        segment->congestionLevel = congestionLevel;
     }
 
     void Simulation::checkAlerts()
     {
-        if(!m_alertCallback || !m_roadNetwork)
+        if(!m_roadNetwork || !m_alertCallback)
             return;
 
-        // Check each segment for alert conditions
-        std::unordered_set<uint32_t> alertedSegments;
-
-        for(const auto& segmentId : m_roadNetwork->getSegmentIds())
+        for(uint32_t segmentId : m_roadNetwork->getSegmentIds())
         {
             const auto* segment = m_roadNetwork->getSegment(segmentId);
             if(!segment)
                 continue;
 
-            // Check for congestion alert
+            // Check for congestion
             if(segment->congestionLevel >= m_alertThresholds[AlertType::CONGESTION])
             {
-                std::string msg = "High congestion detected on segment " +
-                                  std::to_string(segmentId) + " (" +
-                                  std::to_string(int(segment->congestionLevel * 100)) + "%)";
-                m_alertCallback(AlertType::CONGESTION, segmentId, msg);
-                alertedSegments.insert(segmentId);
+                std::string message =
+                    "Heavy traffic detected on road segment " + std::to_string(segmentId);
+                m_alertCallback(AlertType::CONGESTION, segmentId, message);
             }
 
-            // Check for unusual slowdown (comparing to historical average)
+            // Check for unusual slowdown
             auto statsIt = m_segmentStats.find(segmentId);
             if(statsIt != m_segmentStats.end())
             {
                 const auto& stats = statsIt->second;
-
-                // Calculate historical average speed (from last 10 samples)
-                float histAvgSpeed = 0.0f;
-                int sampleCount = 0;
-
-                for(size_t i = 0; i < 10 && i < SegmentStatistics::HISTORY_SIZE; ++i)
+                if(stats.speedHistory.size() > 1)
                 {
-                    size_t idx = (stats.currentIndex + SegmentStatistics::HISTORY_SIZE - i - 1) %
-                                 SegmentStatistics::HISTORY_SIZE;
-                    if(stats.timestamps[idx] > 0)
+                    float currentSpeed = segment->currentSpeed;
+                    float avgSpeed = stats.avgSpeed;
+
+                    if(avgSpeed > 0 &&
+                       currentSpeed < avgSpeed * m_alertThresholds[AlertType::UNUSUAL_SLOWDOWN])
                     {
-                        histAvgSpeed += stats.avgSpeed[idx];
-                        sampleCount++;
-                    }
-                }
-
-                if(sampleCount > 0)
-                {
-                    histAvgSpeed /= sampleCount;
-
-                    // Check if current speed is much lower than historical average
-                    if(histAvgSpeed > 0 &&
-                       segment->currentSpeed / histAvgSpeed <
-                           m_alertThresholds[AlertType::UNUSUAL_SLOWDOWN] &&
-                       alertedSegments.find(segmentId) == alertedSegments.end())
-                    {
-
-                        std::string msg = "Unusual slowdown on segment " +
-                                          std::to_string(segmentId) +
-                                          " (Current: " + std::to_string(segment->currentSpeed) +
-                                          ", Avg: " + std::to_string(histAvgSpeed) + ")";
-                        m_alertCallback(AlertType::UNUSUAL_SLOWDOWN, segmentId, msg);
-                        alertedSegments.insert(segmentId);
+                        std::string message = "Unusual slowdown detected on road segment " +
+                                              std::to_string(segmentId);
+                        m_alertCallback(AlertType::UNUSUAL_SLOWDOWN, segmentId, message);
                     }
                 }
             }

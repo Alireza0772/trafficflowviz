@@ -1,14 +1,11 @@
 #include "network/LiveFeed.hpp"
-
 #include <chrono>
 #include <iostream>
 #include <random>
-#include <sstream>
-#include <thread>
 
 namespace tfv
 {
-    // DummyFeedHandler implementation
+    // Dummy feed handler implementation
     DummyFeedHandler::DummyFeedHandler(Simulation& sim) : m_sim(sim) {}
 
     DummyFeedHandler::~DummyFeedHandler()
@@ -20,12 +17,16 @@ namespace tfv
     {
         if(m_running)
             return;
+
         m_running = true;
         m_thr = std::thread(&DummyFeedHandler::loop, this);
     }
 
     void DummyFeedHandler::stop()
     {
+        if(!m_running)
+            return;
+
         m_running = false;
         if(m_thr.joinable())
             m_thr.join();
@@ -38,24 +39,21 @@ namespace tfv
 
     void DummyFeedHandler::loop()
     {
-        std::mt19937 rng{std::random_device{}()};
-        std::uniform_real_distribution<float> jitter{-1.f, 1.f};
+        std::random_device rd;
+        std::mt19937 gen(rd());
 
+        // Generate random vehicle updates every few seconds
         while(m_running)
         {
-            auto snap = m_sim.snapshot();
-            for(auto& [id, v] : snap)
-            {
-                // Perturb velocity vector instead of speed
-                v.vel.x += jitter(rng);
-                v.vel.y += jitter(rng);
-                m_sim.addVehicle(v); // upsert
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds{500});
+            // Sleep for a bit
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+
+            // In a real implementation, this would add/update vehicles
+            // But for a dummy feed, we'll do nothing
         }
     }
 
-    // WebSocketFeedHandler implementation
+    // WebSocket feed handler stub implementation
     WebSocketFeedHandler::WebSocketFeedHandler(Simulation& sim) : m_sim(sim) {}
 
     WebSocketFeedHandler::~WebSocketFeedHandler()
@@ -67,12 +65,16 @@ namespace tfv
     {
         if(m_running)
             return;
+
         m_running = true;
         m_thr = std::thread(&WebSocketFeedHandler::loop, this);
     }
 
     void WebSocketFeedHandler::stop()
     {
+        if(!m_running)
+            return;
+
         m_running = false;
         if(m_thr.joinable())
             m_thr.join();
@@ -83,85 +85,34 @@ namespace tfv
         return m_running;
     }
 
+    void WebSocketFeedHandler::loop()
+    {
+        while(m_running)
+        {
+            if(connect())
+            {
+                // In a real implementation, this would run the WebSocket protocol
+                // For now, just sleep
+                std::this_thread::sleep_for(std::chrono::seconds(5));
+            }
+            else
+            {
+                // Sleep then retry connection
+                std::this_thread::sleep_for(std::chrono::milliseconds(m_reconnectInterval));
+            }
+        }
+    }
+
     bool WebSocketFeedHandler::connect()
     {
         // In a real implementation, this would establish a WebSocket connection
-        // For now, just log that we're connecting
-        std::cout << "[WebSocket] Connecting to " << m_url << "...\n";
-
-        // Simulate connection success for demonstration
+        // For now, pretend it worked
         return true;
     }
 
     void WebSocketFeedHandler::processMessage(const std::string& msg)
     {
-        // TODO: In a real implementation, parse JSON/Protobuf message
-        // For now, we'll simulate by creating random vehicles
-
-        static uint64_t nextId = 10000; // Start IDs high to avoid conflict with loaded vehicles
-
-        // Simple parsing of dummy format: "vehicle,segmentId,position,velX,velY"
-        std::istringstream iss(msg);
-        std::string type;
-        std::getline(iss, type, ',');
-
-        if(type == "vehicle")
-        {
-            Vehicle v;
-            v.id = nextId++;
-
-            std::string segment;
-            std::getline(iss, segment, ',');
-            v.segmentId = std::stoul(segment);
-
-            std::string pos;
-            std::getline(iss, pos, ',');
-            v.position = std::stof(pos);
-
-            std::string velX;
-            std::getline(iss, velX, ',');
-            v.vel.x = std::stof(velX);
-
-            std::string velY;
-            std::getline(iss, velY);
-            v.vel.y = std::stof(velY);
-
-            m_sim.addVehicle(v);
-        }
-    }
-
-    void WebSocketFeedHandler::loop()
-    {
-        std::mt19937 rng{std::random_device{}()};
-        std::uniform_int_distribution<uint32_t> segmentDist(1, 10); // Assuming segments 1-10 exist
-        std::uniform_real_distribution<float> posDist(0.0f, 1.0f);
-        std::uniform_real_distribution<float> velDist(-5.0f, 5.0f);
-
-        while(m_running)
-        {
-            // Try to connect if not already
-            if(!connect())
-            {
-                std::cout << "[WebSocket] Connection failed, retrying in "
-                          << m_reconnectInterval / 1000.0f << " seconds...\n";
-                std::this_thread::sleep_for(std::chrono::milliseconds(m_reconnectInterval));
-                continue;
-            }
-
-            // Simulate receiving WebSocket messages
-            for(int i = 0; i < 3; ++i)
-            { // Simulate receiving 3 messages per batch
-                // Create a simulated message for a new vehicle
-                std::ostringstream oss;
-                oss << "vehicle," << segmentDist(rng) << "," << posDist(rng) << "," << velDist(rng)
-                    << "," << velDist(rng);
-
-                processMessage(oss.str());
-            }
-
-            // Wait a bit before next batch
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-        }
+        // In a real implementation, this would parse JSON and update vehicles
     }
 
     // LiveFeed implementation
@@ -174,8 +125,10 @@ namespace tfv
 
     void LiveFeed::connect(const std::string& url, FeedType type)
     {
-        disconnect(); // Disconnect any existing feed
+        // Disconnect if already connected
+        disconnect();
 
+        // Create handler based on feed type
         switch(type)
         {
         case FeedType::DUMMY:
@@ -188,11 +141,14 @@ namespace tfv
             break;
         }
 
-        m_handler->start();
-
-        if(m_statusCallback)
+        if(m_handler)
         {
-            m_statusCallback(true, "Connected to feed: " + url);
+            m_handler->start();
+
+            if(m_statusCallback)
+            {
+                m_statusCallback(true, "Connected to feed");
+            }
         }
     }
 
@@ -214,5 +170,4 @@ namespace tfv
     {
         return m_handler && m_handler->isRunning();
     }
-
 } // namespace tfv

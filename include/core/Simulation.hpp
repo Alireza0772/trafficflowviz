@@ -54,6 +54,7 @@ namespace tfv
         void setAlertCallback(AlertCallback cb) { m_alertCallback = cb; }
         void enableAlerts(bool enable) { m_alertsEnabled = enable; }
         void setAlertThreshold(AlertType type, float threshold);
+        void setEnabled(bool enable) { m_alertsEnabled = enable; }
 
       private:
         // Update congestion level for a segment

@@ -14,6 +14,20 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 # Find required packages
 find_package(SDL2 REQUIRED)
 
+# Add ImGui sources
+set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui)
+if(NOT EXISTS "${IMGUI_DIR}")
+  message(STATUS "ImGui not found, will download it...")
+  # Clone the ImGui repository
+  execute_process(
+    COMMAND git clone --depth 1 https://github.com/ocornut/imgui.git ${IMGUI_DIR}
+    RESULT_VARIABLE GIT_RESULT
+  )
+  if(NOT GIT_RESULT EQUAL 0)
+    message(FATAL_ERROR "Failed to clone ImGui repository. Please install git or download ImGui manually.")
+  endif()
+endif()
+
 # For SDL2_image and SDL2_ttf on macOS, point directly to the libraries
 if(APPLE)
   set(SDL2_IMAGE_LIBRARIES "/opt/homebrew/lib/libSDL2_image.dylib") 
@@ -53,6 +67,8 @@ include_directories(
     ${SDL2_TTF_INCLUDE_DIRS}
     ${GLM_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
 )
 
 # Print include directories for debugging

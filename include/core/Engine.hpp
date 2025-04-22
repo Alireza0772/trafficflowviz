@@ -20,6 +20,7 @@ namespace tfv
     class HeatmapRenderer;
     class AlertManager;
     class RecordingManager;
+    class ImGuiRenderer;
 
     // Alert callback
     using AlertUICallback = std::function<void(const std::string& message, uint32_t segmentId)>;
@@ -44,6 +45,9 @@ namespace tfv
         void toggleRecording(bool enable);
         void toggleLiveFeed(bool enable);
         void toggleAlerts(bool enable);
+        void toggleImGui(bool enable);
+        void toggleAntiAliasing(bool enable);
+        void toggleKeybindingsWindow(bool enable);
 
         // Export functionality
         bool exportImage(const std::string& path);
@@ -87,6 +91,7 @@ namespace tfv
         std::unique_ptr<HeatmapRenderer> m_heatmap;
         std::unique_ptr<AlertManager> m_alertManager;
         std::unique_ptr<RecordingManager> m_recordingManager;
+        std::unique_ptr<ImGuiRenderer> m_imguiRenderer;
 
         // data paths
         std::string m_csvPath{"./data/vehicles/vehicles.csv"};
@@ -97,6 +102,9 @@ namespace tfv
         bool m_recordingEnabled{false};
         bool m_alertsEnabled{false};
         bool m_liveFeedEnabled{false};
+        bool m_imguiEnabled{true};        // ImGui enabled by default
+        bool m_antiAliasingEnabled{true}; // Anti-aliasing enabled by default
+        bool m_showKeybindings{false};
 
         // UI callback for alerts
         AlertUICallback m_alertUICallback;

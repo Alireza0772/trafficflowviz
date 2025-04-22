@@ -18,6 +18,8 @@ namespace tfv
         virtual void setColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) = 0;
         virtual void drawLine(int x1, int y1, int x2, int y2) = 0;
         virtual void drawLine(int x1, int y1, int x2, int y2, int width) = 0;
+        virtual void drawAALine(int x1, int y1, int x2, int y2) = 0;
+        virtual void drawAALine(int x1, int y1, int x2, int y2, int width) = 0;
         virtual void drawPoint(int x, int y) = 0;
         virtual void drawRect(int x, int y, int w, int h) = 0;
         virtual void fillRect(int x, int y, int w, int h) = 0;
@@ -35,6 +37,8 @@ namespace tfv
         void setColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) override;
         void drawLine(int x1, int y1, int x2, int y2) override;
         void drawLine(int x1, int y1, int x2, int y2, int width) override;
+        void drawAALine(int x1, int y1, int x2, int y2) override;
+        void drawAALine(int x1, int y1, int x2, int y2, int width) override;
         void drawPoint(int x, int y) override;
         void drawRect(int x, int y, int w, int h) override;
         void fillRect(int x, int y, int w, int h) override;
@@ -46,6 +50,7 @@ namespace tfv
       private:
         SDL_Renderer* m_sdlRenderer;
         SDL_Texture* createTextTexture(const std::string& text);
+        void plotPixel(int x, int y, Uint8 r, Uint8 g, Uint8 b, Uint8 a);
     };
 
     // MetalKit implementation (stub)
@@ -59,6 +64,8 @@ namespace tfv
         void setColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) override;
         void drawLine(int x1, int y1, int x2, int y2) override;
         void drawLine(int x1, int y1, int x2, int y2, int width) override;
+        void drawAALine(int x1, int y1, int x2, int y2) override;
+        void drawAALine(int x1, int y1, int x2, int y2, int width) override;
         void drawPoint(int x, int y) override;
         void drawRect(int x, int y, int w, int h) override;
         void fillRect(int x, int y, int w, int h) override;

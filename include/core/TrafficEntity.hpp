@@ -1,91 +1,95 @@
 #ifndef TFV_TRAFFIC_ENTITY_HPP
 #define TFV_TRAFFIC_ENTITY_HPP
 
-#include <array>
-#include <chrono>
-#include <cstdint>
-#include <glm/vec2.hpp>
+#include <glm/glm.hpp>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace tfv
 {
-    struct RoadSegment; // fwd
+    // Forward declarations
+    struct Vehicle;
+    struct RoadSegment;
+    struct Node;
 
-    struct Node
-    {
-        uint32_t id;
-        glm::vec2 pos;                  // world units (pixels OR metres – pick one)
-        std::vector<uint32_t> outgoing; // segment IDs, cheap & cycle‑free
-    };
+    // Type aliases for collections
+    using VehicleMap = std::unordered_map<uint64_t, Vehicle>;
+    using SegmentStatsMap = std::unordered_map<uint32_t, struct SegmentStatistics>;
 
-    struct RoadSegment
-    {
-        uint32_t id;
-        uint32_t fromNode; // FK to Node::id
-        uint32_t toNode;   // FK to Node::id
-        int laneCount{1};
-        bool oneWay{false};
-        // cached geometry
-        float length{0.f};
-        glm::vec2 dir; // unit vector from 'from' to 'to'
+    // Note: Alert struct is defined in AlertManager.hpp to avoid duplication
 
-        // Traffic metrics
-        float freeFlowSpeed{10.0f};  // baseline speed with no congestion
-        float currentSpeed{10.0f};   // current average speed on this segment
-        int vehicleCount{0};         // current number of vehicles on segment
-        float congestionLevel{0.0f}; // 0.0 (free flow) to 1.0 (standstill)
-    };
-
+    // Vehicle representation
     struct Vehicle
     {
-        uint64_t id;
-        uint32_t segmentId;  // current road segment
-        float position{0.f}; // 0‑1 along that segment
-        glm::vec2 vel{0.f};  // world units / s
-        float length{4.f};
-        float width{2.f};
-        std::string type{"car"}; // vehicle type (car, bus, truck, etc.)
+        uint64_t id;             // Unique identifier
+        uint32_t segmentId;      // Current road segment
+        float position;          // Normalized position along segment (0-1)
+        glm::vec2 vel;           // Velocity vector
+        glm::vec2 acc;           // Acceleration vector
+        float length{4.5f};      // Vehicle length in meters
+        float width{1.8f};       // Vehicle width in meters
+        std::string type{"car"}; // Vehicle type (car, truck, etc.)
     };
 
-    // Statistics for each road segment over time
+    // Road segment (edge in the road network)
+    struct RoadSegment
+    {
+        uint32_t id;                 // Unique identifier
+        uint32_t fromNode;           // Start node
+        uint32_t toNode;             // End node
+        float length;                // Length in meters
+        int lanes{1};                // Number of lanes
+        float speedLimit{13.9f};     // Speed limit (m/s, ~50 km/h)
+        int vehicleCount{0};         // Current number of vehicles
+        float congestionLevel{0.0f}; // Traffic congestion level (0-1)
+        float currentSpeed{13.9f};   // Current average speed (m/s)
+        glm::vec2 dir;               // Direction vector (normalized)
+    };
+
+    // Node in the road network (intersection)
+    struct Node
+    {
+        uint32_t id;                    // Unique identifier
+        glm::vec2 pos;                  // Position (x, y)
+        std::vector<uint32_t> incoming; // Incoming segment IDs
+        std::vector<uint32_t> outgoing; // Outgoing segment IDs
+    };
+
+    // Statistics for a road segment
     struct SegmentStatistics
     {
-        static constexpr size_t HISTORY_SIZE = 60; // Store last 60 timepoints
+        float avgSpeed{0.0f};            // Average speed
+        float avgDensity{0.0f};          // Average vehicle density
+        std::vector<float> speedHistory; // Recent speed measurements
+        std::vector<int> densityHistory; // Recent density measurements
 
-        std::array<float, HISTORY_SIZE> avgSpeed{};   // Average speed over time
-        std::array<int, HISTORY_SIZE> vehicleCount{}; // Vehicle count over time
-        size_t currentIndex{0};                       // Current index in circular buffer
-
-        // Timestamps (seconds since epoch)
-        std::array<double, HISTORY_SIZE> timestamps{};
-
-        // Travel time metrics
-        float histAvgTravelTime{0.0f}; // Historical average travel time
-        float currTravelTime{0.0f};    // Current travel time
-
-        void addSample(float speed, int count)
+        // Add a new sample to the statistics
+        void addSample(float speed, int density)
         {
-            using namespace std::chrono;
+            // Update speed history (limit to last 10 samples)
+            speedHistory.push_back(speed);
+            if(speedHistory.size() > 10)
+                speedHistory.erase(speedHistory.begin());
 
-            // Get current time
-            auto now = high_resolution_clock::now();
-            auto epoch = now.time_since_epoch();
-            double timestamp = duration_cast<duration<double>>(epoch).count();
+            // Update density history (limit to last 10 samples)
+            densityHistory.push_back(density);
+            if(densityHistory.size() > 10)
+                densityHistory.erase(densityHistory.begin());
 
-            // Store in circular buffer
-            avgSpeed[currentIndex] = speed;
-            vehicleCount[currentIndex] = count;
-            timestamps[currentIndex] = timestamp;
+            // Calculate averages
+            avgSpeed = 0.0f;
+            for(float s : speedHistory)
+                avgSpeed += s;
+            avgSpeed /= speedHistory.size();
 
-            // Move to next index
-            currentIndex = (currentIndex + 1) % HISTORY_SIZE;
+            avgDensity = 0.0f;
+            for(int d : densityHistory)
+                avgDensity += d;
+            avgDensity /= densityHistory.size();
         }
     };
 
-    using VehicleMap = std::unordered_map<uint64_t, Vehicle>;
-    using SegmentStatsMap = std::unordered_map<uint32_t, SegmentStatistics>;
-
 } // namespace tfv
-#endif
+
+#endif // TFV_TRAFFIC_ENTITY_HPP

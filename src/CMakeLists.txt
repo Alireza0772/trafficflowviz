@@ -8,6 +8,7 @@ set(TRAFFICFLOWVIZ_SOURCES
     rendering/Renderer.cpp
     rendering/SceneRenderer.cpp
     rendering/HeatmapRenderer.cpp
+    rendering/ImGuiRenderer.cpp
 
     # Data loading sources
     data/CSVLoader.cpp
@@ -25,8 +26,19 @@ set(TRAFFICFLOWVIZ_SOURCES
     main.cpp
 )
 
+# ImGui sources
+set(IMGUI_SOURCES
+    ${CMAKE_SOURCE_DIR}/external/imgui/imgui.cpp
+    ${CMAKE_SOURCE_DIR}/external/imgui/imgui_demo.cpp
+    ${CMAKE_SOURCE_DIR}/external/imgui/imgui_draw.cpp
+    ${CMAKE_SOURCE_DIR}/external/imgui/imgui_tables.cpp
+    ${CMAKE_SOURCE_DIR}/external/imgui/imgui_widgets.cpp
+    ${CMAKE_SOURCE_DIR}/external/imgui/backends/imgui_impl_sdl2.cpp
+    ${CMAKE_SOURCE_DIR}/external/imgui/backends/imgui_impl_sdlrenderer2.cpp
+)
+
 # Define library
-add_library(trafficflowviz_lib STATIC ${TRAFFICFLOWVIZ_SOURCES})
+add_library(trafficflowviz_lib STATIC ${TRAFFICFLOWVIZ_SOURCES} ${IMGUI_SOURCES})
 target_include_directories(trafficflowviz_lib PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/include
