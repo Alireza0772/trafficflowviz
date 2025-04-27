@@ -1,5 +1,6 @@
 #include "core/Simulation.hpp"
 #include <algorithm>
+#include <data/CSVLoader.hpp>
 #include <glm/glm.hpp>
 #include <iostream>
 #include <unordered_set>
@@ -15,7 +16,63 @@ namespace tfv
         m_alertThresholds[AlertType::INCIDENT] = 0.8f;         // 80% drop in speed
     }
 
-    void Simulation::step(double dt)
+    bool Simulation::initialize(const std::filesystem::path& cityInformationPath,
+                                const std::filesystem::path& vehicleInformationPath)
+    {
+        std::scoped_lock lock(m_mtx);
+        // Clear previous data
+        m_vehicles.clear();
+        m_segmentStats.clear();
+        m_speedLimits.clear();
+        m_timeSinceLastUpdate = 0.0;
+
+        // Load road network
+        if(!m_roadNetwork)
+        {
+            m_roadNetwork = new RoadNetwork();
+            if(!m_roadNetwork->loadCSV(cityInformationPath))
+            {
+                std::cerr << "Failed to load road network from " << cityInformationPath
+                          << std::endl;
+                return false;
+            }
+        }
+        // Load vehicle information
+        auto vehicles = tfv::loadVehiclesCSV(vehicleInformationPath);
+        if(vehicles.empty())
+        {
+            std::cerr << "Failed to load vehicle information from " << vehicleInformationPath
+                      << std::endl;
+            return false;
+        }
+        std::cout << "[CSV] loaded " << vehicles.size() << " vehicles\n";
+
+        for(const auto& v : vehicles)
+        {
+            m_vehicles[v.id] = v;
+
+            // Update congestion for the segment
+            if(m_roadNetwork)
+            {
+                auto* segment = m_roadNetwork->getSegment(v.segmentId);
+                if(segment)
+                {
+                    segment->vehicleCount++;
+                    updateCongestion(v.segmentId);
+
+                    std::cout << "Segment " << v.segmentId << " now has " << segment->vehicleCount
+                              << " vehicles." << std::endl;
+                }
+            }
+        }
+
+        std::cout << "Initialized " << vehicles.size() << " vehicles in the simulation."
+                  << std::endl;
+
+        return true;
+    }
+
+    void Simulation::update(double dt)
     {
         std::scoped_lock lock(m_mtx);
 
@@ -154,6 +211,7 @@ namespace tfv
     void Simulation::addVehicle(const Vehicle& v)
     {
         std::scoped_lock lock(m_mtx);
+        std::cout << "[Simulation] Adding vehicle " << v.id << std::endl;
         m_vehicles[v.id] = v;
 
         // Update congestion for the segment
@@ -171,6 +229,7 @@ namespace tfv
     void Simulation::removeVehicle(uint64_t id)
     {
         std::scoped_lock lock(m_mtx);
+        std::cout << "[Simulation] Removing vehicle " << id << std::endl;
 
         // Update segment vehicle count
         auto it = m_vehicles.find(id);
@@ -215,6 +274,7 @@ namespace tfv
 
     void Simulation::updateCongestion(uint32_t segmentId)
     {
+        std::cout << "[Simulation] Updating congestion for segment " << segmentId << std::endl;
         if(!m_roadNetwork)
             return;
 

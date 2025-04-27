@@ -6,19 +6,19 @@
 #include <string>
 #include <unordered_map>
 
+#include "alerts/AlertManager.hpp"
+#include "core/LayerStack.hpp"
 #include "core/RoadNetwork.hpp"
 #include "core/Simulation.hpp"
 #include "network/LiveFeed.hpp"
+#include "recording/RecordingManager.hpp"
 #include "rendering/Renderer.hpp"
-#include "rendering/SceneRenderer.hpp"
+#include "rendering/layers/HeatmapLayer.hpp"
+#include "rendering/layers/ImGuiLayer.hpp"
+#include "rendering/layers/SimulationLayer.hpp"
 
 namespace tfv
 {
-    // Forward declarations
-    class HeatmapRenderer;
-    class AlertManager;
-    class RecordingManager;
-    class ImGuiRenderer;
 
     // Alert callback
     using AlertUICallback = std::function<void(const std::string& message, uint32_t segmentId)>;
@@ -30,10 +30,10 @@ namespace tfv
         ~Engine();
 
         /** Override default CSV path before init(). */
-        void setCSV(std::string p) { m_csvPath = std::move(p); }
+        void setCityInfo(std::string p) { m_cityInfoPath = std::move(p); }
 
-        /** Set the roads CSV path */
-        void setRoadCSV(std::string p) { m_roadPath = std::move(p); }
+        /** Set the vehicle CSV path */
+        void setVehicleInfo(std::string p) { m_vehicleInfoPath = std::move(p); }
 
         bool init();
         void run();
@@ -44,8 +44,6 @@ namespace tfv
         void toggleLiveFeed(bool enable);
         void toggleAlerts(bool enable);
         void toggleImGui(bool enable);
-        /** Toggle anti-aliasing flag (for UI consistency only - anti-aliasing is always enabled in
-         * the renderer) */
         void toggleAntiAliasing(bool enable);
         void toggleKeybindingsWindow(bool enable);
 
@@ -75,7 +73,7 @@ namespace tfv
         int m_w, m_h;
         void* m_window{nullptr};
         std::string m_rendererType;
-        tfv::IRenderer* m_renderer{nullptr};
+        Renderer* m_renderer{nullptr};
 
         // timing
         bool m_running{false};
@@ -86,17 +84,20 @@ namespace tfv
 
         // core subsystems
         Simulation m_sim;
-        SceneRenderer* m_scene{nullptr};
         RoadNetwork m_roads;
         std::unique_ptr<LiveFeed> m_liveFeed;
-        std::unique_ptr<HeatmapRenderer> m_heatmap;
         std::unique_ptr<AlertManager> m_alertManager;
         std::unique_ptr<RecordingManager> m_recordingManager;
-        std::unique_ptr<ImGuiRenderer> m_imguiRenderer;
+
+        // Layers
+        LayerStack m_layerStack;
+        std::shared_ptr<SimulationLayer> m_simulationLayer;
+        std::shared_ptr<HeatmapLayer> m_heatmapLayer;
+        std::shared_ptr<ImGuiLayer> m_imguiLayer;
 
         // data paths
-        std::string m_csvPath{"./data/vehicles/vehicles.csv"};
-        std::string m_roadPath{"./data/roads/roads_complex.csv"};
+        std::string m_vehicleInfoPath{"./data/vehicles/vehicles.csv"};
+        std::string m_cityInfoPath{"./data/roads/roads_complex.csv"};
 
         // Feature flags
         bool m_showHeatmap{false};
@@ -109,9 +110,6 @@ namespace tfv
 
         // UI callback for alerts
         AlertUICallback m_alertUICallback;
-
-        // ImGui helper functions
-        static void HelpMarker(const char* desc);
     };
 
 } // namespace tfv

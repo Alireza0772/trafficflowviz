@@ -1,5 +1,9 @@
 build/
-data/
+./data/
 **.csv
 imgui.ini
 .DS_Store
+build_xcode/
+*.xcodeproj
+*.xcworkspace
+xcuserdata/

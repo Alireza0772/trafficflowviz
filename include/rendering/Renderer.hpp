@@ -7,18 +7,24 @@
 
 namespace tfv
 {
-    // Forward declarations for rendering backend types
-    struct Window;
-    struct RendererBackend;
-
-    // Abstract rendering interface
-    class IRenderer
+    // Abstract rendering interface, templated on the backend type and window type
+    class Renderer
     {
       public:
-        virtual ~IRenderer() = default;
+        // Factory method to create a renderer instance with a specific type
+        static std::unique_ptr<Renderer> create(const std::string& type, void* window);
+
+        // Constructor and destructor
+        Renderer() = default;                          // Default constructor
+        Renderer(const Renderer&) = delete;            // Disable copy constructor
+        Renderer& operator=(const Renderer&) = delete; // Disable copy assignment
+        Renderer(Renderer&&) = default;                // Enable move constructor
+        Renderer& operator=(Renderer&&) = default;     // Enable move assignment
+        // Virtual destructor for proper cleanup of derived classes
+        virtual ~Renderer() = default;
 
         // Initialization methods
-        virtual bool initialize(void* windowHandle) = 0;
+        virtual bool initialize() = 0;
         virtual void shutdown() = 0;
 
         // Rendering methods
@@ -40,71 +46,6 @@ namespace tfv
 
         // Get window size
         virtual void getWindowSize(int& width, int& height) const = 0;
-
-        // Factory method to create a renderer
-        static std::unique_ptr<IRenderer> create(const std::string& type = "SDL");
     };
-
-    // SDL implementation
-    class SDLRenderer : public IRenderer
-    {
-      public:
-        SDLRenderer();
-        ~SDLRenderer();
-
-        bool initialize(void* windowHandle) override;
-        void shutdown() override;
-
-        void clear(uint8_t r, uint8_t g, uint8_t b, uint8_t a) override;
-        void present() override;
-        void setColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) override;
-        void drawLine(int x1, int y1, int x2, int y2) override;
-        void drawLine(int x1, int y1, int x2, int y2, int width) override;
-        void drawPoint(int x, int y) override;
-        void drawRect(int x, int y, int w, int h) override;
-        void fillRect(int x, int y, int w, int h) override;
-        void drawText(const std::string& text, int x, int y) override;
-        void setAntiAliasing(bool enable) override;
-
-        void* getNativeRenderer() const override;
-        void getWindowSize(int& width, int& height) const override;
-
-      private:
-        void* m_sdlWindow{nullptr};
-        void* m_sdlRenderer{nullptr};
-        bool m_antiAliasingEnabled{true};
-        void* createTextTexture(const std::string& text);
-    };
-
-    // MetalKit implementation (stub)
-    class MetalRenderer : public IRenderer
-    {
-      public:
-        MetalRenderer();
-        ~MetalRenderer();
-
-        bool initialize(void* windowHandle) override;
-        void shutdown() override;
-
-        void clear(uint8_t r, uint8_t g, uint8_t b, uint8_t a) override;
-        void present() override;
-        void setColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) override;
-        void drawLine(int x1, int y1, int x2, int y2) override;
-        void drawLine(int x1, int y1, int x2, int y2, int width) override;
-        void drawPoint(int x, int y) override;
-        void drawRect(int x, int y, int w, int h) override;
-        void fillRect(int x, int y, int w, int h) override;
-        void drawText(const std::string& text, int x, int y) override;
-        void setAntiAliasing(bool enable) override;
-
-        void* getNativeRenderer() const override;
-        void getWindowSize(int& width, int& height) const override;
-
-      private:
-        void* m_metalView{nullptr};
-        bool m_antiAliasingEnabled{true};
-    };
-
 } // namespace tfv
-
 #endif

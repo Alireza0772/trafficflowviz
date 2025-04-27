@@ -1,3 +1,4 @@
+find_package(Python3 REQUIRED COMPONENTS Development Interpreter)
 find_package(pybind11 REQUIRED)
 
 pybind11_add_module(trafficflowviz_py py_module.cpp)

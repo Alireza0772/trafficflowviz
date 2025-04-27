@@ -6,9 +6,17 @@ set(TRAFFICFLOWVIZ_SOURCES
 
     # Rendering component sources
     rendering/Renderer.cpp
+    rendering/platforms/SDL.cpp
+    rendering/platforms/Metal.mm
     rendering/SceneRenderer.cpp
     rendering/HeatmapRenderer.cpp
     rendering/ImGuiRenderer.cpp
+
+    # New layer system
+    rendering/LayerStack.cpp
+    rendering/layers/SimulationLayer.cpp
+    rendering/layers/HeatmapLayer.cpp
+    rendering/layers/ImGuiLayer.cpp
 
     # Data loading sources
     data/CSVLoader.cpp
@@ -57,6 +65,15 @@ target_link_libraries(trafficflowviz_lib PUBLIC
     ${SDL2_TTF_LIBRARIES}
 )
 
+# Add macOS-specific frameworks
+if(APPLE)
+    target_link_libraries(trafficflowviz_lib PUBLIC
+        "-framework Metal"
+        "-framework MetalKit"
+        "-framework Cocoa"
+    )
+endif()
+
 # Define executable
 add_executable(trafficviz main.cpp)
 target_link_libraries(trafficviz PRIVATE
@@ -65,6 +82,15 @@ target_link_libraries(trafficviz PRIVATE
     ${SDL2_IMAGE_LIBRARIES}
     ${SDL2_TTF_LIBRARIES}
 )
+
+# Add macOS-specific frameworks for the executable
+if(APPLE)
+    target_link_libraries(trafficviz PRIVATE
+        "-framework Metal"
+        "-framework MetalKit"
+        "-framework Cocoa"
+    )
+endif()
 
 # Install targets
 install(TARGETS trafficviz

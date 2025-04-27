@@ -24,7 +24,7 @@ namespace tfv
     class HeatmapRenderer
     {
       public:
-        explicit HeatmapRenderer(IRenderer* renderer);
+        explicit HeatmapRenderer(Renderer* renderer);
 
         /**
          * Draw heatmap overlay on the road network
@@ -58,7 +58,7 @@ namespace tfv
         void setLineWidthFactor(float factor) { m_lineWidthFactor = std::max(0.1f, factor); }
 
       private:
-        IRenderer* m_renderer;
+        Renderer* m_renderer;
         Color m_lowColor{0, 255, 0, 255};      // Green for low congestion
         Color m_mediumColor{255, 255, 0, 255}; // Yellow for medium congestion
         Color m_highColor{255, 0, 0, 255};     // Red for high congestion

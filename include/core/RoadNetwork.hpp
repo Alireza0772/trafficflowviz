@@ -65,6 +65,14 @@ namespace tfv
         /** Add a new node to the network */
         void addNode(const Node& node);
 
+        inline void clear()
+        {
+            m_seg.clear();
+            m_segments.clear();
+            m_nodes.clear();
+            m_adj.clear();
+        }
+
       private:
         std::vector<RoadVisual> m_seg;
         std::unordered_map<uint32_t, std::vector<uint32_t>> m_adj; // adjacency list

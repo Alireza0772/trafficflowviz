@@ -12,6 +12,6 @@ PYBIND11_MODULE(trafficflowviz, m)
         .def(py::init<const std::string&, int, int>())
         .def("init", &tfv::Engine::init)
         .def("run", &tfv::Engine::run)
-        .def("set_csv", &tfv::Engine::setCSV)
-        .def("set_road_csv", &tfv::Engine::setRoadCSV);
+        .def("set_csv", &tfv::Engine::setCityInfo)
+        .def("set_road_csv", &tfv::Engine::setVehicleInfo);
 }

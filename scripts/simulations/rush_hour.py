@@ -17,10 +17,8 @@ engine = tfv.Engine("Rush Hour Simulation", 1280, 720)
 
 # Set data paths relative to project root
 engine.set_road_csv(os.path.join(project_root, "data/roads/roads_complex.csv"))
-engine.set_csv(os.path.join(project_root, "data/vehicles/vehicles_complex.csv"))
+engine.set_csv(os.path.join(project_root, "data/vehicles/vehicles.csv"))
 
 # Initialize and run the simulation
-if engine.init():
-    engine.run()
-else:
-    print("Failed to initialize engine")
+engine.run()
+

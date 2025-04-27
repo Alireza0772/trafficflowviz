@@ -109,7 +109,7 @@ namespace tfv
         }
     }
 
-    VehicleRenderer::VehicleRenderer(IRenderer* renderer, int panX, int panY, float scale,
+    VehicleRenderer::VehicleRenderer(Renderer* renderer, int panX, int panY, float scale,
                                      bool antiAliasing)
         : m_r(renderer), m_panX(panX), m_panY(panY), m_scale(scale), m_antiAliasing(antiAliasing)
     {

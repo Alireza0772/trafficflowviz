@@ -22,7 +22,7 @@ namespace tfv
     class RecordingManager
     {
       public:
-        RecordingManager(IRenderer* renderer);
+        RecordingManager(Renderer* renderer);
         ~RecordingManager();
 
         /**
@@ -69,7 +69,7 @@ namespace tfv
         // Process thread that saves frames to disk
         void processFrames();
 
-        IRenderer* m_renderer;
+        Renderer* m_renderer;
         int m_width;
         int m_height;
 

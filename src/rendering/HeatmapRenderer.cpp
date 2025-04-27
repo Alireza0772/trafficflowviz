@@ -4,7 +4,7 @@
 
 namespace tfv
 {
-    HeatmapRenderer::HeatmapRenderer(IRenderer* renderer) : m_renderer(renderer) {}
+    HeatmapRenderer::HeatmapRenderer(Renderer* renderer) : m_renderer(renderer) {}
 
     void HeatmapRenderer::draw(const RoadNetwork* roadNetwork,
                                const std::unordered_map<uint32_t, float>& congestionLevels,

@@ -7,8 +7,9 @@
 #include "alerts/AlertManager.hpp"
 #include "data/CSVLoader.hpp"
 #include "recording/RecordingManager.hpp"
-#include "rendering/HeatmapRenderer.hpp"
-#include "rendering/ImGuiRenderer.hpp"
+#include "rendering/layers/HeatmapLayer.hpp"
+#include "rendering/layers/ImGuiLayer.hpp"
+#include "rendering/layers/SimulationLayer.hpp"
 #include <imgui.h>
 
 // Include SDL only for event handling - will be abstracted in future updates
@@ -25,14 +26,15 @@ namespace tfv
     Engine::~Engine()
     {
         // Clean up in reverse order of creation
-        m_imguiRenderer.reset();
+        m_layerStack.clear();
+        m_simulationLayer.reset();
+        m_heatmapLayer.reset();
+        m_imguiLayer.reset();
+
         m_recordingManager.reset();
         m_alertManager.reset();
         m_liveFeed.reset();
-        m_heatmap.reset();
 
-        if(m_scene)
-            delete m_scene;
         if(m_renderer)
             delete m_renderer;
 
@@ -47,83 +49,58 @@ namespace tfv
 
     bool Engine::init()
     {
-        // Initialize underlying graphics API
-        if(m_rendererType == "SDL")
+        // Initialize SDL for the SDL renderer
+        if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
         {
-            // Initialize SDL for the SDL renderer
-            if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
-            {
-                std::cerr << "SDL init failed: " << SDL_GetError() << '\n';
-                return false;
-            }
-
-            // Create window
-            m_window = SDL_CreateWindow(m_title.c_str(), SDL_WINDOWPOS_CENTERED,
-                                        SDL_WINDOWPOS_CENTERED, m_w, m_h, 0);
-
-            if(!m_window)
-            {
-                std::cerr << "Window creation failed: " << SDL_GetError() << '\n';
-                return false;
-            }
-        }
-        else if(m_rendererType == "Metal")
-        {
-            // Metal initialization would go here
-            std::cerr << "Metal renderer not yet implemented" << std::endl;
+            std::cerr << "SDL init failed: " << SDL_GetError() << '\n';
             return false;
+        }
+
+        // Create window with no border, resizable, and with a specific size also without top client
+        // area to make it look like a native window
+        m_window = SDL_CreateWindow(m_title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                                    m_w, m_h, SDL_WINDOW_BORDERLESS | SDL_WINDOW_RESIZABLE);
+
+        if(!m_window)
+        {
+            std::cerr << "Window creation failed: " << SDL_GetError() << '\n';
+            return false;
+        }
+        std::cout << "Window created successfully" << std::endl;
+        // Set window icon
+        SDL_Surface* icon = SDL_LoadBMP("assets/icon.bmp");
+
+        if(icon)
+        {
+            SDL_SetWindowIcon(static_cast<SDL_Window*>(m_window), icon);
+            SDL_FreeSurface(icon);
         }
         else
         {
-            std::cerr << "Unsupported renderer type: " << m_rendererType << std::endl;
-            return false;
+            std::cerr << "Failed to load window icon: " << SDL_GetError() << '\n';
         }
 
         // Create the renderer using factory method
-        m_renderer = IRenderer::create(m_rendererType).release();
+        m_renderer = Renderer::create(m_rendererType, m_window).release();
         if(!m_renderer)
         {
-            std::cerr << "Failed to create renderer" << std::endl;
+            std::cerr << "Renderer creation failed" << std::endl;
             return false;
         }
-
-        // Initialize the renderer with window handle
-        if(!m_renderer->initialize(m_window))
+        std::cout << "Renderer created successfully" << std::endl;
+        if(!m_renderer->initialize())
         {
             std::cerr << "Renderer initialization failed" << std::endl;
             return false;
         }
+        std::cout << "Renderer initialized successfully" << std::endl;
 
-        // Create scene renderer
-        m_scene = new SceneRenderer(m_renderer);
-
-        // Initialize ImGui
-        if(m_rendererType == "SDL")
+        if(!m_sim.initialize(m_cityInfoPath, m_vehicleInfoPath))
         {
-            void* nativeRenderer = m_renderer->getNativeRenderer();
-            m_imguiRenderer = std::make_unique<ImGuiRenderer>(
-                static_cast<SDL_Window*>(m_window), static_cast<SDL_Renderer*>(nativeRenderer));
-            m_imguiRenderer->init();
+            std::cerr << "Simulation initialization failed" << std::endl;
+            return false;
         }
-
-        // Enable keybindings window by default
-        m_showKeybindings = true;
-
-        // Load road network
-        m_roads.loadCSV(m_roadPath);
-        m_scene->setNetwork(&m_roads);
-
-        // Connect road network to simulation
-        m_sim.setRoadNetwork(&m_roads);
-
-        // Load vehicles
-        auto vehicles = tfv::loadVehiclesCSV(m_csvPath);
-        std::cout << "[CSV] loaded " << vehicles.size() << " vehicles\n";
-        for(const auto& v : vehicles)
-            m_sim.addVehicle(v);
-
-        // Initialize heatmap renderer
-        m_heatmap = std::make_unique<HeatmapRenderer>(m_renderer);
+        std::cout << "Simulation initialized successfully" << std::endl;
 
         // Initialize alert manager
         m_alertManager = std::make_unique<AlertManager>(m_sim);
@@ -141,6 +118,35 @@ namespace tfv
         m_recordingManager = std::make_unique<RecordingManager>(m_renderer);
         m_recordingManager->setStatusCallback([](const std::string& msg)
                                               { std::cout << "[Recording] " << msg << std::endl; });
+
+        // Create and initialize layers
+
+        // 1. Simulation layer (base layer)
+        m_simulationLayer = std::make_shared<SimulationLayer>(m_renderer, &m_sim);
+        m_layerStack.pushLayer(m_simulationLayer);
+
+        // 2. Heatmap layer
+        m_heatmapLayer =
+            std::make_shared<HeatmapLayer>(m_renderer, &m_sim, m_simulationLayer.get());
+        m_layerStack.pushLayer(m_heatmapLayer);
+        m_heatmapLayer->setEnabled(m_showHeatmap);
+
+        // 3. ImGui layer (top layer)
+        if(m_rendererType == "SDL")
+        {
+            void* nativeRenderer = m_renderer->getNativeRenderer();
+            m_imguiLayer =
+                std::make_shared<ImGuiLayer>(static_cast<SDL_Window*>(m_window),
+                                             static_cast<SDL_Renderer*>(nativeRenderer), &m_sim);
+
+            m_imguiLayer->setSimulationLayer(m_simulationLayer.get());
+            m_imguiLayer->setAlertManager(m_alertManager.get());
+            m_imguiLayer->setRecordingManager(m_recordingManager.get());
+            m_imguiLayer->showKeybindingsWindow(m_showKeybindings);
+
+            m_layerStack.pushLayer(m_imguiLayer);
+            m_imguiLayer->setEnabled(m_imguiEnabled);
+        }
 
         return true;
     }
@@ -181,12 +187,14 @@ namespace tfv
         SDL_Event e;
         while(SDL_PollEvent(&e))
         {
-            // Process ImGui events first if enabled
-            if(m_imguiEnabled && m_imguiRenderer)
+            // Process events through the layer stack first
+            if(m_layerStack.onEvent(&e))
             {
-                m_imguiRenderer->processEvent(e);
+                // Event was handled by a layer
+                continue;
             }
 
+            // Handle application-level events
             if(e.type == SDL_QUIT)
                 m_running = false;
 
@@ -196,30 +204,6 @@ namespace tfv
                 {
                 case SDLK_ESCAPE:
                     m_running = false;
-                    break;
-
-                // Pan with arrow keys
-                case SDLK_LEFT:
-                    m_scene->setPan(m_scene->getPanX() + 20, m_scene->getPanY());
-                    break;
-                case SDLK_RIGHT:
-                    m_scene->setPan(m_scene->getPanX() - 20, m_scene->getPanY());
-                    break;
-                case SDLK_UP:
-                    m_scene->setPan(m_scene->getPanX(), m_scene->getPanY() + 20);
-                    break;
-                case SDLK_DOWN:
-                    m_scene->setPan(m_scene->getPanX(), m_scene->getPanY() - 20);
-                    break;
-
-                // Zoom controls
-                case SDLK_EQUALS: // '+' key (zoom in)
-                case SDLK_KP_PLUS:
-                    m_scene->setZoom(m_scene->getZoom() * 1.1f);
-                    break;
-                case SDLK_MINUS: // '-' key (zoom out)
-                case SDLK_KP_MINUS:
-                    m_scene->setZoom(m_scene->getZoom() / 1.1f);
                     break;
 
                 // Feature toggles
@@ -259,23 +243,13 @@ namespace tfv
                     break;
                 }
             }
-
-            // Zoom with mouse wheel
-            if(e.type == SDL_MOUSEWHEEL)
-            {
-                float zoom = m_scene->getZoom();
-                if(e.wheel.y > 0)
-                    m_scene->setZoom(zoom * 1.1f);
-                else if(e.wheel.y < 0)
-                    m_scene->setZoom(zoom / 1.1f);
-            }
         }
     }
 
     void Engine::update(double dt)
     {
         // Update simulation
-        m_sim.step(dt);
+        m_sim.update(dt);
 
         // Process live data if enabled
         if(m_liveFeedEnabled && m_liveFeed)
@@ -297,8 +271,8 @@ namespace tfv
             // m_alertManager->update(dt);
         }
 
-        // Update scene
-        m_scene->update(dt);
+        // Update all layers
+        m_layerStack.onUpdate(dt);
 
         m_t += dt;
     }
@@ -307,305 +281,69 @@ namespace tfv
     {
         m_renderer->clear(0, 0, 0, 255);
 
-        // Get current vehicle snapshot from simulation
-        VehicleMap vehicles = m_sim.snapshot();
+        // Render all layers
+        m_layerStack.onRender();
 
-        // Draw scene contents with the latest vehicle data
-        m_scene->draw(vehicles);
-
-        // Render heatmap if enabled
-        if(m_showHeatmap && m_heatmap)
+        // Render ImGui components if enabled
+        if(m_imguiEnabled)
         {
-            // Use existing draw method instead of render
-            m_heatmap->draw(m_scene->getNetwork(), m_sim.getCongestionLevels(), m_scene->getPanX(),
-                            m_scene->getPanY(), m_scene->getZoom());
+            m_layerStack.onImGuiRender();
         }
 
-        // Render ImGui if enabled
-        if(m_imguiEnabled && m_imguiRenderer)
-        {
-            m_imguiRenderer->beginFrame();
-
-            // Create main dockspace
-            static bool dockspaceOpen = true;
-            static bool opt_fullscreen = true;
-            static ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode;
-
-            // We are using the ImGuiWindowFlags_NoDocking flag to make the parent window not
-            // dockable into, because it would be confusing to have two docking targets within each
-            // others.
-            ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
-            if(opt_fullscreen)
-            {
-                const ImGuiViewport* viewport = ImGui::GetMainViewport();
-                ImGui::SetNextWindowPos(viewport->WorkPos);
-                ImGui::SetNextWindowSize(viewport->WorkSize);
-                ImGui::SetNextWindowViewport(viewport->ID);
-                ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-                ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-                window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
-                                ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
-                window_flags |=
-                    ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
-            }
-
-            // When using ImGuiDockNodeFlags_PassthruCentralNode, DockSpace() will render our
-            // background and handle the pass-thru hole, so we ask Begin() to not render a
-            // background.
-            if(dockspace_flags & ImGuiDockNodeFlags_PassthruCentralNode)
-                window_flags |= ImGuiWindowFlags_NoBackground;
-
-            // Important: note that we proceed even if Begin() returns false (aka window is
-            // collapsed). This is because we want to keep our DockSpace() active. If a DockSpace()
-            // is inactive, all active windows docked into it will lose their parent and become
-            // undocked.
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-            ImGui::Begin("DockSpace Demo", &dockspaceOpen, window_flags);
-            ImGui::PopStyleVar();
-
-            if(opt_fullscreen)
-                ImGui::PopStyleVar(2);
-
-            // Submit the DockSpace
-            ImGuiIO& io = ImGui::GetIO();
-            if(io.ConfigFlags & ImGuiConfigFlags_DockingEnable)
-            {
-                ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
-                ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
-            }
-
-            // Add menu bar
-            if(ImGui::BeginMenuBar())
-            {
-                if(ImGui::BeginMenu("File"))
-                {
-                    if(ImGui::MenuItem("Exit", "Esc"))
-                    {
-                        m_running = false;
-                    }
-                    ImGui::EndMenu();
-                }
-
-                if(ImGui::BeginMenu("View"))
-                {
-                    ImGui::MenuItem("Keybindings", nullptr, &m_showKeybindings);
-                    ImGui::MenuItem("Heatmap", "H", &m_showHeatmap);
-                    ImGui::MenuItem("Anti-aliasing", "G", &m_antiAliasingEnabled);
-                    if(ImGui::MenuItem("Toggle ImGui", "I"))
-                    {
-                        toggleImGui(!m_imguiEnabled);
-                    }
-                    ImGui::EndMenu();
-                }
-
-                if(ImGui::BeginMenu("Features"))
-                {
-                    ImGui::MenuItem("Live Feed", "L", &m_liveFeedEnabled);
-                    ImGui::MenuItem("Alerts", "A", &m_alertsEnabled);
-                    ImGui::MenuItem("Recording", "R", &m_recordingEnabled);
-                    ImGui::EndMenu();
-                }
-
-                ImGui::EndMenuBar();
-            }
-
-            // Show keybindings window as a dockable window
-            if(m_showKeybindings)
-            {
-                m_imguiRenderer->showKeybindingsWindow(&m_showKeybindings);
-            }
-
-            // FPS and stats panel
-            ImGui::Begin("Stats", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-            ImGui::Text("FPS: %d", m_fps);
-            ImGui::Text("Vehicle count: %zu", vehicles.size());
-            ImGui::End();
-
-            // Alerts panel
-            if(m_alertsEnabled && m_alertManager)
-            {
-                ImGui::Begin("Alerts", nullptr);
-
-                // Get active alerts
-                auto alerts = m_alertManager->getActiveAlerts();
-
-                if(alerts.empty())
-                {
-                    ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.0f, 1.0f), "No active alerts");
-                }
-                else
-                {
-                    // Display each alert
-                    for(size_t i = 0; i < alerts.size(); i++)
-                    {
-                        const auto& alert = alerts[i];
-
-                        // Set color based on alert type
-                        ImVec4 color;
-                        switch(alert.type)
-                        {
-                        case AlertType::CONGESTION:
-                            color = ImVec4(1.0f, 0.4f, 0.4f, 1.0f); // Red
-                            break;
-                        case AlertType::SPEED_VIOLATION:
-                            color = ImVec4(1.0f, 0.8f, 0.0f, 1.0f); // Orange
-                            break;
-                        case AlertType::UNUSUAL_SLOWDOWN:
-                            color = ImVec4(1.0f, 1.0f, 0.0f, 1.0f); // Yellow
-                            break;
-                        case AlertType::INCIDENT:
-                            color = ImVec4(1.0f, 0.0f, 0.0f, 1.0f); // Bright red
-                            break;
-                        default:
-                            color = ImVec4(1.0f, 1.0f, 1.0f, 1.0f); // White
-                        }
-
-                        ImGui::PushStyleColor(ImGuiCol_Text, color);
-                        ImGui::Text("%s", alert.message.c_str());
-                        ImGui::PopStyleColor();
-
-                        ImGui::SameLine();
-                        std::string btnId = "Acknowledge##" + std::to_string(i);
-                        if(ImGui::Button(btnId.c_str()))
-                        {
-                            m_alertManager->acknowledgeAlert(i);
-                        }
-
-                        // Add a line between alerts
-                        if(i < alerts.size() - 1)
-                        {
-                            ImGui::Separator();
-                        }
-                    }
-                }
-
-                ImGui::End();
-            }
-
-            // Control Panel
-            ImGui::Begin("Control Panel");
-
-            if(ImGui::CollapsingHeader("Alert Thresholds", ImGuiTreeNodeFlags_DefaultOpen))
-            {
-                static float congestionThreshold = 0.7f;
-                static float speedViolationThreshold = 1.5f;
-                static float unusualSlowdownThreshold = 0.5f;
-                static float incidentThreshold = 0.8f;
-
-                // Congestion threshold (0.0-1.0)
-                if(ImGui::SliderFloat("Congestion", &congestionThreshold, 0.0f, 1.0f, "%.2f"))
-                {
-                    m_sim.setAlertThreshold(AlertType::CONGESTION, congestionThreshold);
-                }
-                ImGui::SameLine();
-                HelpMarker("Threshold for traffic congestion (0-1)");
-
-                // Speed violation threshold (1.0-2.0)
-                if(ImGui::SliderFloat("Speed Violation", &speedViolationThreshold, 1.0f, 2.0f,
-                                      "%.2f"))
-                {
-                    m_sim.setAlertThreshold(AlertType::SPEED_VIOLATION, speedViolationThreshold);
-                }
-                ImGui::SameLine();
-                HelpMarker("Multiplier above speed limit to trigger alert");
-
-                // Unusual slowdown threshold (0.0-1.0)
-                if(ImGui::SliderFloat("Unusual Slowdown", &unusualSlowdownThreshold, 0.0f, 1.0f,
-                                      "%.2f"))
-                {
-                    m_sim.setAlertThreshold(AlertType::UNUSUAL_SLOWDOWN, unusualSlowdownThreshold);
-                }
-                ImGui::SameLine();
-                HelpMarker("Fraction of normal speed to trigger alert");
-
-                // Incident threshold (0.0-1.0)
-                if(ImGui::SliderFloat("Incident", &incidentThreshold, 0.0f, 1.0f, "%.2f"))
-                {
-                    m_sim.setAlertThreshold(AlertType::INCIDENT, incidentThreshold);
-                }
-                ImGui::SameLine();
-                HelpMarker("Sudden speed drop fraction to trigger alert");
-            }
-
-            if(ImGui::CollapsingHeader("Visualization", ImGuiTreeNodeFlags_DefaultOpen))
-            {
-                // Heatmap toggle
-                bool heatmap = m_showHeatmap;
-                if(ImGui::Checkbox("Show Heatmap", &heatmap))
-                {
-                    toggleHeatmap(heatmap);
-                }
-
-                // Anti-aliasing toggle
-                bool antiAliasing = m_antiAliasingEnabled;
-                if(ImGui::Checkbox("Anti-aliasing", &antiAliasing))
-                {
-                    toggleAntiAliasing(antiAliasing);
-                }
-
-                // Zoom slider
-                float zoom = m_scene->getZoom();
-                if(ImGui::SliderFloat("Zoom", &zoom, 0.1f, 10.0f, "%.1f"))
-                {
-                    m_scene->setZoom(zoom);
-                }
-            }
-
-            ImGui::End();
-
-            ImGui::End(); // End dockspace window
-
-            m_imguiRenderer->endFrame();
-        }
-
+        // Present the renderer
         m_renderer->present();
     }
 
     bool Engine::updateFPSCounter(double dt)
     {
-        m_frameCount++;
         m_fpsTimer += dt;
+        m_frameCount++;
 
         if(m_fpsTimer >= 1.0)
         {
             m_fps = m_frameCount;
             m_frameCount = 0;
-            m_fpsTimer -= 1.0;
+            m_fpsTimer = 0.0;
+
+            // Update ImGui layer with new FPS if available
+            if(m_imguiLayer)
+            {
+                // Set fps directly on layer or provide a setter method
+                // in the ImGuiLayer class instead of directly accessing private member
+                m_imguiLayer->setFPS(m_fps);
+            }
+
             return true;
         }
-
         return false;
     }
 
     void Engine::toggleHeatmap(bool enable)
     {
         m_showHeatmap = enable;
-        std::cout << "Heatmap: " << (enable ? "enabled" : "disabled") << std::endl;
+        if(m_heatmapLayer)
+        {
+            m_heatmapLayer->setEnabled(enable);
+        }
     }
 
     void Engine::toggleRecording(bool enable)
     {
-        if(!m_recordingManager)
-            return;
+        m_recordingEnabled = enable;
 
-        if(enable && !m_recordingEnabled)
+        if(m_recordingManager)
         {
-            // Start recording
-            std::string filename =
-                "trafficviz_" + std::to_string(static_cast<long>(time(nullptr))) + ".mp4";
-            if(m_recordingManager->startRecording(filename))
+            if(enable && !m_recordingManager->isRecording())
             {
-                m_recordingEnabled = true;
-                std::cout << "Recording started: " << filename << std::endl;
+                // Start recording
+                std::string filename =
+                    "trafficviz_" + std::to_string(static_cast<long>(time(nullptr))) + ".mp4";
+                m_recordingManager->startRecording(filename, 30);
             }
-        }
-        else if(!enable && m_recordingEnabled)
-        {
-            // Stop recording
-            if(m_recordingManager->stopRecording())
+            else if(!enable && m_recordingManager->isRecording())
             {
-                m_recordingEnabled = false;
-                std::cout << "Recording stopped" << std::endl;
+                // Stop recording
+                m_recordingManager->stopRecording();
             }
         }
     }
@@ -613,65 +351,65 @@ namespace tfv
     void Engine::toggleLiveFeed(bool enable)
     {
         m_liveFeedEnabled = enable;
-        std::cout << "Live feed: " << (enable ? "enabled" : "disabled") << std::endl;
+        // Additional implementation if needed
     }
 
     void Engine::toggleAlerts(bool enable)
     {
         m_alertsEnabled = enable;
-        std::cout << "Alerts: " << (enable ? "enabled" : "disabled") << std::endl;
-
         if(m_alertManager)
         {
-            // Enable/disable alerts in the alert manager
+            // Enable/disable the alert manager
+            // m_alertManager->setEnabled(enable);
         }
     }
 
     bool Engine::exportImage(const std::string& path)
     {
-        if(!m_recordingManager)
-            return false;
-
-        return m_recordingManager->captureScreenshot(path);
+        if(m_recordingManager)
+        {
+            return m_recordingManager->captureScreenshot(path);
+        }
+        return false;
     }
 
     bool Engine::startVideoRecording(const std::string& path, int fps)
     {
-        if(!m_recordingManager)
-            return false;
-
-        if(m_recordingManager->startRecording(path, fps))
+        if(m_recordingManager)
         {
-            m_recordingEnabled = true;
-            return true;
+            bool success = m_recordingManager->startRecording(path, fps);
+            if(success)
+            {
+                m_recordingEnabled = true;
+            }
+            return success;
         }
-
         return false;
     }
 
     bool Engine::stopVideoRecording()
     {
-        if(!m_recordingManager || !m_recordingEnabled)
-            return false;
-
-        if(m_recordingManager->stopRecording())
+        if(m_recordingManager)
         {
-            m_recordingEnabled = false;
-            return true;
+            bool success = m_recordingManager->stopRecording();
+            if(success)
+            {
+                m_recordingEnabled = false;
+            }
+            return success;
         }
-
         return false;
     }
 
     bool Engine::connectToFeed(const std::string& url, FeedType type)
     {
-        // Implementation remains the same
+        // Implementation of live feed connection
         return false;
     }
 
     bool Engine::disconnectFromFeed()
     {
-        // Implementation remains the same
+        // Implementation of live feed disconnection
         return false;
     }
 
@@ -682,38 +420,34 @@ namespace tfv
 
     void Engine::processAlert(AlertType type, uint32_t segmentId, const std::string& message)
     {
-        // Implementation remains the same
+        // Implementation of alert processing
     }
 
     void Engine::toggleKeybindingsWindow(bool enable)
     {
         m_showKeybindings = enable;
-        std::cout << "Keybindings window: " << (enable ? "visible" : "hidden") << std::endl;
+        if(m_imguiLayer)
+        {
+            m_imguiLayer->showKeybindingsWindow(enable);
+        }
     }
 
     void Engine::toggleImGui(bool enable)
     {
         m_imguiEnabled = enable;
-        std::cout << "ImGui: " << (enable ? "enabled" : "disabled") << std::endl;
+        if(m_imguiLayer)
+        {
+            m_imguiLayer->setEnabled(enable);
+        }
     }
 
     void Engine::toggleAntiAliasing(bool enable)
     {
         m_antiAliasingEnabled = enable;
-        m_scene->setAntiAliasing(enable);
-        std::cout << "Anti-aliasing: " << (enable ? "enabled" : "disabled") << std::endl;
-    }
-
-    void Engine::HelpMarker(const char* desc)
-    {
-        ImGui::TextDisabled("(?)");
-        if(ImGui::IsItemHovered())
+        if(m_renderer)
         {
-            ImGui::BeginTooltip();
-            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
-            ImGui::TextUnformatted(desc);
-            ImGui::PopTextWrapPos();
-            ImGui::EndTooltip();
+            m_renderer->setAntiAliasing(enable);
         }
     }
+
 } // namespace tfv

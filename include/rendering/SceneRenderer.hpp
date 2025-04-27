@@ -13,8 +13,7 @@ namespace tfv
     class RoadRenderer
     {
       public:
-        RoadRenderer(IRenderer* renderer, int panX, int panY, float scale,
-                     bool antiAliasing = false)
+        RoadRenderer(Renderer* renderer, int panX, int panY, float scale, bool antiAliasing = false)
             : m_r(renderer), m_panX(panX), m_panY(panY), m_scale(scale), roadWidth{10.f},
               dashed{false}, m_antiAliasing{antiAliasing}
         {
@@ -28,7 +27,7 @@ namespace tfv
         void setAntiAliasing(bool enable) { m_antiAliasing = enable; }
 
       private:
-        IRenderer* m_r;
+        Renderer* m_r;
         int m_panX, m_panY;
         float m_scale;
         float roadWidth{10.f};
@@ -40,13 +39,13 @@ namespace tfv
     class VehicleRenderer
     {
       public:
-        VehicleRenderer(IRenderer* renderer, int panX, int panY, float scale,
+        VehicleRenderer(Renderer* renderer, int panX, int panY, float scale,
                         bool antiAliasing = false);
         void draw(const VehicleMap& vehicles, const RoadNetwork* net);
         void setAntiAliasing(bool enable) { m_antiAliasing = enable; }
 
       private:
-        IRenderer* m_r;
+        Renderer* m_r;
         int m_panX, m_panY;
         float m_scale;
         bool m_antiAliasing{false};
@@ -56,7 +55,7 @@ namespace tfv
     class SceneRenderer
     {
       public:
-        explicit SceneRenderer(IRenderer* r) : m_r(r) {}
+        explicit SceneRenderer(Renderer* r) : m_r(r) {}
 
         /** Supply road network (can be nullptr). */
         void setNetwork(const RoadNetwork* net) { m_net = net; }
@@ -96,7 +95,7 @@ namespace tfv
         const RoadNetwork* getNetwork() const { return m_net; }
 
       private:
-        IRenderer* m_r;
+        Renderer* m_r;
         const RoadNetwork* m_net{nullptr};
         float m_scale{1.0f};
         int m_panX{0};

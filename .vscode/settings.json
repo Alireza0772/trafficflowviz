@@ -3,7 +3,8 @@
         "iostream": "cpp",
         "chrono": "cpp",
         "cmath": "cpp",
-        "*.ipp": "cpp"
+        "*.ipp": "cpp",
+        "unordered_map": "cpp"
     },
     // Auto‑select Ninja generator and arm64 clang
     "cmake.generator": "Ninja",

@@ -27,11 +27,11 @@ namespace tfv
       public:
         explicit Simulation(RoadNetwork* net = nullptr);
 
-        // Set the road network
-        void setRoadNetwork(RoadNetwork* net) { m_roadNetwork = net; }
+        bool initialize(const std::filesystem::path& cityInformationPath,
+                        const std::filesystem::path& vehicleInformationPath);
 
         /** Advance physics by `dt` seconds. */
-        void step(double dt);
+        void update(double dt);
 
         /** Thread‑safe copy for rendering. */
         VehicleMap snapshot() const;
@@ -56,7 +56,13 @@ namespace tfv
         void setAlertThreshold(AlertType type, float threshold);
         void setEnabled(bool enable) { m_alertsEnabled = enable; }
 
+        // Get road network
+        const RoadNetwork* getRoadNetwork() const { return m_roadNetwork; }
+
       private:
+        // attach inputs to the simulation
+        void attachInputs();
+
         // Update congestion level for a segment
         void updateCongestion(uint32_t segmentId);
 

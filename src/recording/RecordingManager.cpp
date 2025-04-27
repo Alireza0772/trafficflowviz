@@ -20,7 +20,7 @@ namespace tfv
         }
     };
 
-    RecordingManager::RecordingManager(IRenderer* renderer)
+    RecordingManager::RecordingManager(Renderer* renderer)
         : m_renderer(renderer), m_width(0), m_height(0)
     {
         // Initialize SDL_image for saving PNG files
