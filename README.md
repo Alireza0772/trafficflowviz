@@ -5,18 +5,23 @@ High-performance C++/SDL engine for visualizing live and historical traffic flow
 ---
 
 ## Table of Contents
-- [Overview](#overview)
-- [Features](#features)
-- [Architecture](#architecture)
-- [Installation & Build](#installation--build)
-- [Usage](#usage)
-- [Controls](#controls)
-- [Python Scripting](#python-scripting)
-- [Data Formats & Sample Data](#data-formats--sample-data)
-- [Logging System](#logging-system)
-- [Development & Contribution](#development--contribution)
-- [License & Credits](#license--credits)
-- [TODOs](#todos)
+- [TrafficFlowViz](#trafficflowviz)
+  - [Table of Contents](#table-of-contents)
+  - [Overview](#overview)
+  - [Features](#features)
+  - [Architecture](#architecture)
+  - [Installation \& Build](#installation--build)
+    - [Prerequisites](#prerequisites)
+    - [Build Instructions](#build-instructions)
+  - [Usage](#usage)
+    - [Run the Application](#run-the-application)
+    - [Python Scripting](#python-scripting)
+  - [Controls](#controls)
+  - [Data Formats \& Sample Data](#data-formats--sample-data)
+  - [Logging System](#logging-system)
+  - [Development \& Contribution](#development--contribution)
+  - [License \& Credits](#license--credits)
+  - [TODOs](#todos)
 
 ---
 
@@ -46,7 +51,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design notes.
 
 ## Installation & Build
 ### Prerequisites
-- C++17 compiler (tested on macOS, Linux)
+- C++23 compiler (tested on macOS, Linux)
 - CMake 3.15+
 - Python 3.8+
 - SDL2, ImGui (included as submodules)
@@ -117,7 +122,7 @@ TrafficFlowViz features a global, structured, and colorized logging system for a
 ## License & Credits
 - See `LICENSE` (if present) for license details
 - ImGui and SDL2 are included under their respective licenses in `external/`
-- Developed by [Your Name/Team], 2023–2025
+- Developed by Alireza Senobari, 2023–2025
 
 ---
 
