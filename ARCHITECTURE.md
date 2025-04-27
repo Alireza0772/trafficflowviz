@@ -1,87 +1,117 @@
-# Traffic Flow Visualization Architecture
+# TrafficFlowViz – System Architecture
 
-## Overview
+## 1. Overview
+TrafficFlowViz is a modular, high-performance C++ application for real-time and historical traffic flow visualization and analytics. The architecture is designed for extensibility, cross-platform support, and integration with live and historical data sources. It is inspired by the Walnut engine, with a layered approach for rendering, UI, and simulation.
 
-The Traffic Flow Visualization application uses a layered architecture inspired by Walnut (https://github.com/StudioCherno/Walnut) for rendering and UI components. This document outlines the main components and architecture of the system.
+---
 
-## Core Components
+## 2. High-Level System Diagram & Data Flow
+
+- **Data Sources:**
+  - Live feeds (REST/WebSocket, JSON/Protobuf) [FR-01]
+  - Historical logs (CSV/Parquet) [FR-02]
+  - Sensor fusion (loop, camera, GPS) [FR-03]
+- **Core Engine:**
+  - Manages simulation, road network, and traffic entities
+  - Coordinates all subsystems and the main loop
+- **Layered Rendering System:**
+  - SimulationLayer: core visualization, camera controls [FR-04]
+  - HeatmapLayer: congestion overlays [FR-05]
+  - ImGuiLayer: dockable UI, controls, analytics [FR-09]
+- **Extensibility:**
+  - Python scripting API [FR-07]
+  - Plugin system for DSP/ML modules [FR-08]
+  - Self-driving traffic entities (planned)
+- **Output:**
+  - Real-time visualization, alerts, analytics, export (video/PNG, GeoJSON)
+
+---
+
+## 3. Core Components & Responsibilities
 
 ### Engine
-
-The `Engine` class is the central coordinator that initializes and manages all subsystems. It handles:
-- Window and renderer creation
-- Main application loop (update, render, event handling)
-- Layer management
-- Core simulation components
+- Central coordinator: initializes window, renderer, simulation, and layers
+- Handles main loop (update, render, event dispatch)
+- Manages plugin and scripting integration
 
 ### Layer System
+- Each layer encapsulates a feature (simulation, heatmap, UI, etc.)
+- Layers are managed by LayerStack (z-order, add/remove, event propagation)
+- Layers can be toggled, reordered, or extended at runtime
 
-The application uses a layered architecture for rendering and UI components. Each layer can be independently updated, rendered, and receive events. Layers are processed in order from lowest to highest z-index.
+#### Key Layers
+- **SimulationLayer:**
+  - Renders vehicles, roads, and self-driving entities
+  - Handles camera and user interaction
+- **HeatmapLayer:**
+  - Visualizes congestion and speed ratios
+  - Supports tooltips and overlays
+- **ImGuiLayer:**
+  - Provides dockable, resizable UI
+  - Hosts analytics, controls, alerts, and rule editor
 
-#### Layer Interface
+### Rendering System
+- Abstracted for multiple backends (SDL, Metal, Vulkan, etc.)
+- SceneRenderer: draws map, vehicles, and overlays
+- HeatmapRenderer: specialized for congestion visualization
 
-The `Layer` abstract class provides the interface for all rendering layers:
-- `onAttach()` - Called when the layer is added to the stack
-- `onDetach()` - Called when the layer is removed from the stack
-- `onEvent(void* event)` - Processes events (returns true if handled)
-- `onUpdate(double dt)` - Updates layer logic
-- `onRender()` - Renders layer content
-- `onImGuiRender()` - Renders ImGui components for this layer
+### Data & Integration
+- CSVLoader: loads road and vehicle data
+- LiveFeed: ingests real-time data (auto-reconnect, JSON/Protobuf)
+- RecordingManager: session recording and replay
+- Python bindings: exposes simulation and analytics to Python
+- Plugin loader: loads and sandboxes C/C++/Rust modules
 
-#### LayerStack
+### Traffic Entities
+- Supports both human-driven and self-driving vehicles (planned)
+- Entities are extensible for future ML/AI integration
 
-The `LayerStack` class manages a collection of layers and handles:
-- Adding and removing layers
-- Maintaining z-index order
-- Dispatching events, updates, and render calls to all layers
+### Logging System
+- Structured, colorized, thread-safe logging (console & file)
+- Parameterized macros for consistent, filterable logs
 
-#### Implemented Layers
+---
 
-1. **SimulationLayer** (z-index 0)
-   - Renders the core traffic simulation
-   - Handles camera controls (pan/zoom)
-   - Manages the SceneRenderer
+## 4. Extensibility & Future-Proofing
+- **Plugin System:** Load custom analytics, DSP, or ML modules at runtime (FR-08)
+- **Python Scripting:** Automate scenarios, analytics, and orchestration (FR-07)
+- **Self-Driving Entities:** Simulate and visualize autonomous vehicles (planned)
+- **Layer Serialization:** Save/load UI and visualization state
+- **Cross-Platform:** Designed for macOS, Linux, Windows (NFR-07)
 
-2. **HeatmapLayer** (z-index 1)
-   - Renders traffic congestion heatmap visualization
-   - Overlays on top of the simulation layer
-   - Can be toggled on/off
+---
 
-3. **ImGuiLayer** (z-index 100)
-   - Handles all Dear ImGui UI rendering
-   - Provides user interface controls, menus, and windows
-   - Manages dockable UI layout
+## 5. Mapping to Functional Requirements
+| FR    | Component(s)                   | Notes                        |
+| ----- | ------------------------------ | ---------------------------- |
+| FR-01 | LiveFeed, Engine               | Real-time data ingestion     |
+| FR-02 | CSVLoader, RecordingManager    | Historical log loading       |
+| FR-03 | LiveFeed, Data Fusion          | Multi-source sensor fusion   |
+| FR-04 | SimulationLayer, SceneRenderer | Map-based visualization      |
+| FR-05 | HeatmapLayer, HeatmapRenderer  | Congestion overlays          |
+| FR-06 | Algorithms, Export             | Isochrone computation/export |
+| FR-07 | Python Bindings                | Scripting API                |
+| FR-08 | Plugin Loader                  | Runtime extensibility        |
+| FR-09 | ImGuiLayer, Alerts             | Alerts & event rules         |
+| FR-10 | RecordingManager               | Session recording/replay     |
 
-## Rendering System
+---
 
-The rendering system is abstracted to support multiple backends:
+## 6. Performance & Cross-Platform Considerations
+- Optimized for ≥ 60 fps at 1080p (NFR-01)
+- Thread-safe logging and data ingestion
+- Designed for horizontal scalability and future distributed deployment
+- CI/CD for macOS, Linux, Windows
 
-- `Renderer` - Abstract interface for rendering commands
-- `SceneRenderer` - Handles traffic visualization rendering
-- `HeatmapRenderer` - Specialized renderer for congestion heatmaps
-- Platform-specific implementations (e.g., `SDLRenderer`)
+---
 
-## Benefits of Layered Architecture
+## 7. Future Improvements
+- Additional visualization layers (e.g., isochrones, ML overlays)
+- More renderer backends (Metal, Vulkan)
+- Enhanced plugin sandboxing and monitoring
+- Full support for self-driving traffic entities
+- Layer serialization and workspace export
+- Advanced analytics and reporting modules
 
-1. **Separation of Concerns**
-   - Each layer has a specific responsibility
-   - Easier to maintain and extend
-
-2. **Flexibility**
-   - Layers can be added, removed, or reordered at runtime
-   - Features can be toggled by enabling/disabling layers
-
-3. **Event Handling**
-   - Events cascade through layers in z-order
-   - Top layers can intercept events before they reach lower layers
-
-4. **Independent Updating**
-   - Each layer manages its own update and render logic
-   - Layers can be updated at different rates if needed
-
-## Future Improvements
-
-- Add more specialized visualization layers
-- Implement additional renderer backends (Metal, Vulkan, etc.)
-- Create a plugin system for extending functionality
-- Add support for layer serialization 
+---
+For detailed requirements, see [Product Requirements Document.md](Product%20Requirments%20Document.md).
