@@ -1,4 +1,5 @@
 #include "core/Simulation.hpp"
+#include "utils/LoggingManager.hpp"
 #include <algorithm>
 #include <data/CSVLoader.hpp>
 #include <glm/glm.hpp>
@@ -32,8 +33,8 @@ namespace tfv
             m_roadNetwork = new RoadNetwork();
             if(!m_roadNetwork->loadCSV(cityInformationPath))
             {
-                std::cerr << "Failed to load road network from " << cityInformationPath
-                          << std::endl;
+                LOG_ERROR("Failed to load road network from {file}",
+                          PARAM(file, cityInformationPath.string()));
                 return false;
             }
         }
@@ -41,11 +42,10 @@ namespace tfv
         auto vehicles = tfv::loadVehiclesCSV(vehicleInformationPath);
         if(vehicles.empty())
         {
-            std::cerr << "Failed to load vehicle information from " << vehicleInformationPath
-                      << std::endl;
+            LOG_ERROR("Failed to load vehicle information from {file}",
+                      PARAM(file, vehicleInformationPath.string()));
             return false;
         }
-        std::cout << "[CSV] loaded " << vehicles.size() << " vehicles\n";
 
         for(const auto& v : vehicles)
         {
@@ -60,14 +60,13 @@ namespace tfv
                     segment->vehicleCount++;
                     updateCongestion(v.segmentId);
 
-                    std::cout << "Segment " << v.segmentId << " now has " << segment->vehicleCount
-                              << " vehicles." << std::endl;
+                    LOG_INFO("Segment {segmentId} now has {count} vehicles",
+                             PARAM(segmentId, v.segmentId), PARAM(count, segment->vehicleCount));
                 }
             }
         }
 
-        std::cout << "Initialized " << vehicles.size() << " vehicles in the simulation."
-                  << std::endl;
+        LOG_INFO("Initialized {count} vehicles in the simulation.", PARAM(count, vehicles.size()));
 
         return true;
     }
@@ -211,7 +210,7 @@ namespace tfv
     void Simulation::addVehicle(const Vehicle& v)
     {
         std::scoped_lock lock(m_mtx);
-        std::cout << "[Simulation] Adding vehicle " << v.id << std::endl;
+        LOG_DEBUG("Adding vehicle {id}", PARAM(id, v.id));
         m_vehicles[v.id] = v;
 
         // Update congestion for the segment
@@ -229,7 +228,7 @@ namespace tfv
     void Simulation::removeVehicle(uint64_t id)
     {
         std::scoped_lock lock(m_mtx);
-        std::cout << "[Simulation] Removing vehicle " << id << std::endl;
+        LOG_DEBUG("Removing vehicle {id}", PARAM(id, id));
 
         // Update segment vehicle count
         auto it = m_vehicles.find(id);
@@ -274,7 +273,7 @@ namespace tfv
 
     void Simulation::updateCongestion(uint32_t segmentId)
     {
-        std::cout << "[Simulation] Updating congestion for segment " << segmentId << std::endl;
+        LOG_DEBUG("Updating congestion for segment {segmentId}", PARAM(segmentId, segmentId));
         if(!m_roadNetwork)
             return;
 

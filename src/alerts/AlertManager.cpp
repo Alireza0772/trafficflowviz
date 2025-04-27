@@ -1,4 +1,5 @@
 #include "alerts/AlertManager.hpp"
+#include "utils/LoggingManager.hpp"
 #include <iostream>
 
 namespace tfv
@@ -61,7 +62,7 @@ namespace tfv
         }
 
         // Log the alert
-        std::cout << "[Alert] " << message << std::endl;
+        emitAlert(message);
     }
 
     void AlertManager::acknowledgeAlert(size_t index)
@@ -93,5 +94,10 @@ namespace tfv
     void AlertManager::setThreshold(AlertType type, float threshold)
     {
         m_sim.setAlertThreshold(type, threshold);
+    }
+
+    void AlertManager::emitAlert(const std::string& message)
+    {
+        LOG_INFO("[Alert] {message}", PARAM(message, message));
     }
 } // namespace tfv

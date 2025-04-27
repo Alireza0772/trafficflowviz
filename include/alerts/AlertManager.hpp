@@ -69,6 +69,11 @@ namespace tfv
          */
         void setThreshold(AlertType type, float threshold);
 
+        /**
+         * Emit an alert message
+         */
+        void emitAlert(const std::string& message);
+
       private:
         Simulation& m_sim;
         bool m_enabled{false};

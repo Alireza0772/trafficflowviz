@@ -1,4 +1,5 @@
 #include "recording/RecordingManager.hpp"
+#include "utils/LoggingManager.hpp"
 #include <SDL2/SDL_image.h>
 #include <chrono>
 #include <filesystem>
@@ -27,8 +28,8 @@ namespace tfv
         int imgFlags = IMG_INIT_PNG;
         if(!(IMG_Init(imgFlags) & imgFlags))
         {
-            std::cerr << "SDL_image could not initialize! SDL_image Error: " << IMG_GetError()
-                      << std::endl;
+            LOG_ERROR("SDL_image could not initialize! SDL_image Error: {error}",
+                      PARAM(error, IMG_GetError()));
         }
 
         // Get window size from renderer
@@ -63,8 +64,8 @@ namespace tfv
         SDL_Renderer* sdlRenderer = static_cast<SDL_Renderer*>(m_renderer->getNativeRenderer());
         if(!sdlRenderer)
         {
-            std::cerr << "Failed to get native renderer for screenshot" << std::endl;
-            return false;
+            LOG_ERROR("Failed to get native renderer for screenshot: {error}",
+                      PARAM(error, SDL_GetError()));
         }
 
         // Create an RGB surface to copy the renderer to
@@ -72,7 +73,7 @@ namespace tfv
                                                        0x0000FF00, 0x000000FF, 0xFF000000);
         if(!sdlSurface)
         {
-            std::cerr << "Failed to create screenshot surface: " << SDL_GetError() << std::endl;
+            LOG_ERROR("Failed to create screenshot surface: {error}", PARAM(error, SDL_GetError()));
             return false;
         }
 
@@ -80,7 +81,7 @@ namespace tfv
         if(SDL_RenderReadPixels(sdlRenderer, nullptr, SDL_PIXELFORMAT_ARGB8888, sdlSurface->pixels,
                                 sdlSurface->pitch) != 0)
         {
-            std::cerr << "Failed to read pixels from renderer: " << SDL_GetError() << std::endl;
+            LOG_ERROR("Failed to read pixels from renderer: {error}", PARAM(error, SDL_GetError()));
             SDL_FreeSurface(sdlSurface);
             return false;
         }
@@ -190,7 +191,8 @@ namespace tfv
         SDL_Renderer* sdlRenderer = static_cast<SDL_Renderer*>(m_renderer->getNativeRenderer());
         if(!sdlRenderer)
         {
-            std::cerr << "Failed to get native renderer for frame capture" << std::endl;
+            LOG_ERROR("Failed to get native renderer for frame capture: {error}",
+                      PARAM(error, SDL_GetError()));
             return;
         }
 
@@ -199,7 +201,7 @@ namespace tfv
                                                        0x0000FF00, 0x000000FF, 0xFF000000);
         if(!sdlSurface)
         {
-            std::cerr << "Failed to create frame surface: " << SDL_GetError() << std::endl;
+            LOG_ERROR("Failed to create frame surface: {error}", PARAM(error, SDL_GetError()));
             return;
         }
 
@@ -207,7 +209,7 @@ namespace tfv
         if(SDL_RenderReadPixels(sdlRenderer, nullptr, SDL_PIXELFORMAT_ARGB8888, sdlSurface->pixels,
                                 sdlSurface->pitch) != 0)
         {
-            std::cerr << "Failed to read pixels from renderer: " << SDL_GetError() << std::endl;
+            LOG_ERROR("Failed to read pixels from renderer: {error}", PARAM(error, SDL_GetError()));
             SDL_FreeSurface(sdlSurface);
             return;
         }
@@ -233,7 +235,7 @@ namespace tfv
         // Save the surface to a PNG file
         if(IMG_SavePNG(static_cast<SDL_Surface*>(surface->impl), path.c_str()) != 0)
         {
-            std::cerr << "Failed to save PNG: " << IMG_GetError() << std::endl;
+            LOG_ERROR("Failed to save PNG: {error}", PARAM(error, IMG_GetError()));
             return false;
         }
 

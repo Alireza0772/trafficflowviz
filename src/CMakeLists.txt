@@ -18,6 +18,8 @@ set(TRAFFICFLOWVIZ_SOURCES
     rendering/layers/HeatmapLayer.cpp
     rendering/layers/ImGuiLayer.cpp
 
+    utils/LoggingManager.cpp
+
     # Data loading sources
     data/CSVLoader.cpp
 
@@ -81,6 +83,12 @@ target_link_libraries(trafficviz PRIVATE
     ${SDL2_LIBRARIES}
     ${SDL2_IMAGE_LIBRARIES}
     ${SDL2_TTF_LIBRARIES}
+)
+
+# define target-specific macros
+target_compile_definitions(trafficviz PRIVATE
+    $<$<CONFIG:DEBUG>:DEBUG>
+    $<$<CONFIG:RELEASE>:NDEBUG>
 )
 
 # Add macOS-specific frameworks for the executable

@@ -1,4 +1,5 @@
 #include "rendering/platforms/SDL.hpp"
+#include "utils/LoggingManager.hpp"
 
 #include <iostream>
 namespace tfv
@@ -16,8 +17,7 @@ namespace tfv
         // Initialize SDL_ttf
         if(TTF_Init() == -1)
         {
-            std::cerr << "SDL_ttf could not initialize! SDL_ttf Error: " << TTF_GetError()
-                      << std::endl;
+            LOG_ERROR("SDL_ttf could not initialize! {error}", PARAM(error, TTF_GetError()));
             return false;
         }
 
@@ -26,7 +26,7 @@ namespace tfv
             SDL_CreateRenderer(m_window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
         if(!m_renderer)
         {
-            std::cerr << "Renderer creation failed: " << SDL_GetError() << '\n';
+            LOG_ERROR("Renderer creation failed: {error}", PARAM(error, SDL_GetError()));
             return false;
         }
 
@@ -211,7 +211,7 @@ namespace tfv
         TTF_Font* font = TTF_OpenFont("/System/Library/Fonts/Supplemental/Arial.ttf", 16);
         if(!font)
         {
-            std::cerr << "Failed to load font: " << TTF_GetError() << std::endl;
+            LOG_ERROR("Failed to load font: {error}", PARAM(error, TTF_GetError()));
             // Try fallback font
             font = TTF_OpenFont("/System/Library/Fonts/Supplemental/Courier New.ttf", 16);
             if(!font)

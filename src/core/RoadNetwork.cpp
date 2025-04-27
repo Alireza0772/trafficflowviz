@@ -1,4 +1,5 @@
 #include "core/RoadNetwork.hpp"
+#include "utils/LoggingManager.hpp"
 
 #include <cmath>
 #include <fstream>
@@ -32,7 +33,7 @@ namespace tfv
         std::ifstream file(path);
         if(!file.is_open())
         {
-            std::cerr << "[Road] could not open " << path << '\n';
+            LOG_ERROR("[Road] could not open {file}", PARAM(file, path.string()));
             return false;
         }
 
@@ -111,9 +112,9 @@ namespace tfv
                 m_adj[r.x2].push_back(r.id);
             }
         }
-
-        std::cout << "[Road] loaded " << m_seg.size() << " segments from " << path << '\n';
-        std::cout << "[Road] created " << m_nodes.size() << " nodes\n";
+        LOG_INFO("loaded {count} segments from {file}", PARAM(count, m_seg.size()),
+                 PARAM(file, path.string()));
+        LOG_INFO("created {count} nodes", PARAM(count, m_nodes.size()));
         return !m_seg.empty();
     }
 

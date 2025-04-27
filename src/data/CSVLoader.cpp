@@ -1,4 +1,5 @@
 #include "data/CSVLoader.hpp"
+#include "utils/LoggingManager.hpp"
 
 #include <fstream>
 #include <glm/glm.hpp>
@@ -15,7 +16,7 @@ namespace tfv
 
         if(!file.is_open())
         {
-            std::cerr << "Failed to open file: " << path << std::endl;
+            LOG_ERROR("Failed to open file: {file}", PARAM(file, path.string()));
             return vehicles;
         }
 
@@ -80,6 +81,9 @@ namespace tfv
             vehicles.push_back(v);
         }
 
+        // Log the number of vehicles loaded
+        LOG_INFO("Loaded {count} vehicles from {file}", PARAM(count, vehicles.size()),
+                 PARAM(file, path.string()));
         return vehicles;
     }
 } // namespace tfv

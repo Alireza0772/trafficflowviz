@@ -10,6 +10,7 @@
 #include "rendering/layers/HeatmapLayer.hpp"
 #include "rendering/layers/ImGuiLayer.hpp"
 #include "rendering/layers/SimulationLayer.hpp"
+#include "utils/LoggingManager.hpp"
 #include <imgui.h>
 
 // Include SDL only for event handling - will be abstracted in future updates
@@ -52,7 +53,7 @@ namespace tfv
         // Initialize SDL for the SDL renderer
         if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
         {
-            std::cerr << "SDL init failed: " << SDL_GetError() << '\n';
+            LOG_ERROR("SDL init failed: {error}", PARAM(error, SDL_GetError()));
             return false;
         }
 
@@ -63,10 +64,10 @@ namespace tfv
 
         if(!m_window)
         {
-            std::cerr << "Window creation failed: " << SDL_GetError() << '\n';
+            LOG_ERROR("Window creation failed: {error}", PARAM(error, SDL_GetError()));
             return false;
         }
-        std::cout << "Window created successfully" << std::endl;
+        LOG_INFO("Window created successfully");
         // Set window icon
         SDL_Surface* icon = SDL_LoadBMP("assets/icon.bmp");
 
@@ -77,30 +78,30 @@ namespace tfv
         }
         else
         {
-            std::cerr << "Failed to load window icon: " << SDL_GetError() << '\n';
+            LOG_ERROR("Failed to load window icon: {error}", PARAM(error, SDL_GetError()));
         }
 
         // Create the renderer using factory method
         m_renderer = Renderer::create(m_rendererType, m_window).release();
         if(!m_renderer)
         {
-            std::cerr << "Renderer creation failed" << std::endl;
+            LOG_ERROR("Renderer creation failed");
             return false;
         }
-        std::cout << "Renderer created successfully" << std::endl;
+        LOG_INFO("Renderer created successfully");
         if(!m_renderer->initialize())
         {
-            std::cerr << "Renderer initialization failed" << std::endl;
+            LOG_ERROR("Renderer initialization failed");
             return false;
         }
-        std::cout << "Renderer initialized successfully" << std::endl;
+        LOG_INFO("Renderer initialized successfully");
 
         if(!m_sim.initialize(m_cityInfoPath, m_vehicleInfoPath))
         {
-            std::cerr << "Simulation initialization failed" << std::endl;
+            LOG_ERROR("Simulation initialization failed");
             return false;
         }
-        std::cout << "Simulation initialized successfully" << std::endl;
+        LOG_INFO("Simulation initialized successfully");
 
         // Initialize alert manager
         m_alertManager = std::make_unique<AlertManager>(m_sim);
@@ -116,8 +117,8 @@ namespace tfv
 
         // Initialize recording manager
         m_recordingManager = std::make_unique<RecordingManager>(m_renderer);
-        m_recordingManager->setStatusCallback([](const std::string& msg)
-                                              { std::cout << "[Recording] " << msg << std::endl; });
+        m_recordingManager->setStatusCallback([this](const std::string& msg)
+                                              { LOG_INFO("[Recording] {msg}", PARAM(msg, msg)); });
 
         // Create and initialize layers
 
