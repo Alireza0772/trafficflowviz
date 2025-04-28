@@ -7,3 +7,8 @@ build_xcode/
 *.xcodeproj
 *.xcworkspace
 xcuserdata/
+imgui.ini
+.vscode/
+.visualstudio/
+fix_includes.sh
+update_includes.sh

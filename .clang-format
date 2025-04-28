@@ -8,5 +8,5 @@ PointerAlignment: Left
 SpaceBeforeParens: Never
 BreakBeforeBraces: Allman
 Cpp11BracedListStyle: true
-Standard: c++17
+Standard: c++23
 NamespaceIndentation: All
