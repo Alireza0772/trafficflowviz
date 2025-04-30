@@ -1,14 +1,13 @@
 build/
 ./data/
 **.csv
-imgui.ini
 .DS_Store
 build_xcode/
 *.xcodeproj
 *.xcworkspace
 xcuserdata/
-imgui.ini
 .vscode/
 .visualstudio/
 fix_includes.sh
 update_includes.sh
+imgui.ini
