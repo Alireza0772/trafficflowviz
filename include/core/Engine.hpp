@@ -6,6 +6,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "Config.hpp"
 #include "alerts/AlertManager.hpp"
 #include "core/LayerStack.hpp"
 #include "core/RoadNetwork.hpp"
@@ -96,8 +97,8 @@ namespace tfv
         std::shared_ptr<ImGuiLayer> m_imguiLayer;
 
         // data paths
-        std::string m_vehicleInfoPath{"./data/vehicles/vehicles.csv"};
-        std::string m_cityInfoPath{"./data/roads/roads_complex.csv"};
+        std::string m_vehicleInfoPath{TFV_VEHICLE_INFO_PATH};
+        std::string m_cityInfoPath{TFV_CITY_INFO_PATH};
 
         // Feature flags
         bool m_showHeatmap{false};

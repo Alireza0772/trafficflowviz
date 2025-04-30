@@ -1,0 +1,4 @@
+#pragma once
+
+#define TFV_VEHICLE_INFO_PATH "@TFV_VEHICLE_INFO_PATH@"
+#define TFV_CITY_INFO_PATH "@TFV_CITY_INFO_PATH@"

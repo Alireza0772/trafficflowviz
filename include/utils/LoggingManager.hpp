@@ -166,7 +166,7 @@ namespace utils
 // ──────────────────────── user-facing convenience macros ──────────────────
 #define LOG_INFO(fmt, ...)                                                                         \
     ::utils::LoggingManager::Instance().Info(__LOG_SCOPE__, fmt __VA_OPT__(, ) __VA_ARGS__)
-#define LOG_WARNING(fmt, ...)                                                                      \
+#define LOG_WARN(fmt, ...)                                                                         \
     ::utils::LoggingManager::Instance().Warn(__LOG_SCOPE__, fmt __VA_OPT__(, ) __VA_ARGS__)
 #define LOG_ERROR(fmt, ...)                                                                        \
     ::utils::LoggingManager::Instance().Error(__LOG_SCOPE__, fmt __VA_OPT__(, ) __VA_ARGS__)

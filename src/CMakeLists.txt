@@ -6,8 +6,6 @@ set(TRAFFICFLOWVIZ_SOURCES
 
     # Rendering component sources
     rendering/Renderer.cpp
-    rendering/platforms/SDL.cpp
-    rendering/platforms/Metal.mm
     rendering/SceneRenderer.cpp
     rendering/HeatmapRenderer.cpp
     rendering/ImGuiRenderer.cpp
@@ -18,6 +16,12 @@ set(TRAFFICFLOWVIZ_SOURCES
     rendering/layers/HeatmapLayer.cpp
     rendering/layers/ImGuiLayer.cpp
 
+    # Platform-specific sources
+    platforms/SDL/SDLRenderer.cpp
+    platforms/SDL/SDLWindow.cpp
+    platforms/Apple/MetalRenderer.mm
+
+    # Utilities
     utils/LoggingManager.cpp
 
     # Data loading sources

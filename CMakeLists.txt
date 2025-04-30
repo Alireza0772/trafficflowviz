@@ -67,6 +67,16 @@ else()
   message(STATUS "Found GLM: ${GLM_INCLUDE_DIRS}")
 endif()
 
+# Configure Config.hpp with data paths
+set(TFV_VEHICLE_INFO_PATH "../../data/vehicles/vehicles.csv")
+set(TFV_CITY_INFO_PATH "../../data/roads/roads_complex.csv")
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/Config.hpp.in
+    ${CMAKE_CURRENT_BINARY_DIR}/include/Config.hpp
+    @ONLY
+)
+include_directories(${CMAKE_CURRENT_BINARY_DIR}/include)
+
 # Set include paths
 include_directories(
     ${SDL2_INCLUDE_DIRS}
