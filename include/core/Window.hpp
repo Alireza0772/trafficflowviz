@@ -24,10 +24,10 @@ namespace tfv
         // Add other properties like fullscreen, vsync, etc. if needed
     };
 
-    class IWindow
+    class Window
     {
       public:
-        virtual ~IWindow() = default;
+        virtual ~Window() = default;
 
         virtual bool initialize(const WindowProps& props) = 0;
         virtual void shutdown() = 0;
@@ -50,8 +50,8 @@ namespace tfv
         // Processing events might be handled within pollEvents or need a dedicated function
         // depending on your event system design. Let's assume pollEvents handles it for now.
 
-        static std::unique_ptr<IWindow> create(const WindowProps& props = {"TrafficVis", 1280,
-                                                                           720}); // Factory
+        static std::unique_ptr<Window> create(const WindowProps& props = {"TrafficVis", 1280,
+                                                                          720}); // Factory
     };
 
 } // namespace tfv

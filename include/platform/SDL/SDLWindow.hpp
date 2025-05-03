@@ -15,7 +15,7 @@ extern bool ImGui_ImplSDL2_ProcessEvent(const SDL_Event* event);
 namespace tfv
 {
 
-    class SDLWindow : public IWindow
+    class SDLWindow : public Window
     {
       public:
         SDLWindow();

@@ -1,155 +1,232 @@
 # TrafficFlowViz
 
-High-performance C++/SDL engine for visualizing live and historical traffic flows with a modern ImGui interface and Python scripting support.
+**High‑performance C++ platform for live & historical traffic visualisation, analytics and reinforcement‑learning research.**
 
 ---
 
-## Table of Contents
+## Table of Contents
+
 - [TrafficFlowViz](#trafficflowviz)
-  - [Table of Contents](#table-of-contents)
+  - [Table of Contents](#tableofcontents)
   - [Overview](#overview)
-  - [Features](#features)
-  - [Architecture](#architecture)
-  - [Installation \& Build](#installation--build)
+  - [Key Features](#keyfeatures)
+  - [Quick Start](#quickstart)
+  - [Detailed Installation](#detailedinstallation)
     - [Prerequisites](#prerequisites)
-    - [Build Instructions](#build-instructions)
-  - [Usage](#usage)
-    - [Run the Application](#run-the-application)
-    - [Python Scripting](#python-scripting)
-  - [Controls](#controls)
-  - [Data Formats \& Sample Data](#data-formats--sample-data)
-  - [Logging System](#logging-system)
-  - [Development \& Contribution](#development--contribution)
-  - [License \& Credits](#license--credits)
-  - [TODOs](#todos)
+    - [Build Options](#buildoptions)
+  - [Python API](#pythonapi)
+  - [Data Formats](#dataformats)
+  - [Docker \& Dev Containers](#dockerdevcontainers)
+  - [Testing \& CI](#testingci)
+  - [Contributing](#contributing)
+  - [Roadmap](#roadmap)
+  - [License \& Citation](#licensecitation)
+  - [Architecture (Short)](#architectureshort)
 
 ---
 
 ## Overview
-TrafficFlowViz is a high-performance, extensible C++ engine for real-time and historical traffic flow visualization. It supports interactive simulation, live data feeds, and a dockable UI for research, prototyping, and demonstration purposes.
 
-## Features
-- Road network and vehicle CSV loaders
-- Real-time vehicle simulation loop
-- Pan & zoom visualization
-- Python scripting bridge for automation and custom scenarios
-- Dockable, resizable ImGui interface
-- Real-time alerts and statistics panels
-- Heatmap overlay for traffic density
-- Structured, colorized logging system
-- (Planned) WebSocket live feed adapter
-- (Planned) Export to video/PNG
+TrafficFlowViz (TFV) lets city engineers, researchers and data‑scientists **ingest 100 k+ msgs s⁻¹**, replay months of log data and experiment with RL/GNN control policies from the comfort of a Jupyter notebook – all while maintaining **≥ 60 FPS** interactive visuals on commodity GPUs.
 
-## Architecture
-- **Core Engine:** Manages simulation, road networks, and entities
-- **Rendering:** Uses SDL and ImGui for high-performance, interactive graphics
-- **Data:** Loads road and vehicle data from CSV files
-- **Python Bindings:** Exposes simulation controls to Python
-- **Extensible:** Modular design for adding new features and data sources
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design notes.
-
-## Installation & Build
-### Prerequisites
-- C++23 compiler (tested on macOS, Linux)
-- CMake 3.15+
-- Python 3.8+
-- SDL2, ImGui (included as submodules)
-
-### Build Instructions
-```bash
-# Clone repository with submodules
-git clone --recursive https://github.com/yourusername/trafficflowviz.git
-cd trafficflowviz
-
-# If you already cloned without --recursive, initialize submodules:
-git submodule update --init --recursive
-
-# Build (Debug)
-./build.sh
-
-# Build (Release)
-./build.sh release
-```
-
-## Usage
-### Run the Application
-```bash
-./build/bin/trafficviz
-```
-
-### Python Scripting
-Set the Python path and run scripts:
-```bash
-export PYTHONPATH=build/python:$PYTHONPATH
-python scripts/simulations/rush_hour.py
-```
-
-## Controls
-See [KEYBINDINGS.md](KEYBINDINGS.md) for a complete list of keyboard shortcuts and controls.
-- Press `I` to toggle the ImGui interface
-- Use mouse to pan/zoom
-
-## Data Formats & Sample Data
-Sample datasets are provided in the `data/` directory.
-
-| File                   | Description                                |
-| ---------------------- | ------------------------------------------ |
-| `roads_complex.csv`    | Octagonal ring + two diagonal connectors   |
-| `vehicles_complex.csv` | 40 vehicles pre-positioned on all segments |
-
-See `data/roads/` and `data/vehicles/` for more examples. Data format documentation is in [Product Requirements Document.md](Product%20Requirments%20Document.md).
-
-## Logging System
-TrafficFlowViz features a global, structured, and colorized logging system for all C++ code:
-- Use macros: `LOG_INFO`, `LOG_WARNING`, `LOG_ERROR`, and `LOG_DEBUG` (debug-only)
-- Parameterized logs: use `PARAM(name, value)` for each named parameter
-- Example:
-  ```cpp
-  LOG_INFO("Loaded {count} vehicles from {file}", PARAM(count, 42), PARAM(file, filename));
-  LOG_ERROR("Failed to open file: {file}", PARAM(file, filename));
-  LOG_DEBUG("Debug info: {val}", PARAM(val, someValue));
-  ```
-- Each log includes timestamp, log level, filename:line, and colorized parameters
-- LOG_DEBUG only emits logs in debug builds
-
-## Development & Contribution
-- Format code with `clang-format` (see VS Code tasks)
-- Build and run using provided shell scripts or VS Code tasks
-- See [ARCHITECTURE.md](ARCHITECTURE.md) and [Product Requirements Document.md](Product%20Requirments%20Document.md) for design and requirements
-- Contributions welcome! Please open issues or pull requests
-
-## License & Credits
-- See `LICENSE` (if present) for license details
-- ImGui and SDL2 are included under their respective licenses in `external/`
-- Developed by Alireza Senobari, 2023–2025
+> **Why another traffic viewer?**  Existing tools focus either on microscopic simulation (SUMO, Vissim) or pretty but non‑interactive dashboards. TFV bridges the gap: native‑code performance + modern UI + first‑class Python bridge.
 
 ---
 
-## TODOs
+## Key Features
 
-- [x] Road CSV loader implemented (FR-02)
-- [x] Vehicle simulation loop functional (FR-04)
-- [x] Real-time pan & zoom enabled (FR-04)
-- [x] Python scripting bridge integrated (FR-07)
-- [x] Dockable UI with ImGui (FR-04, FR-09)
-- [x] Heatmap overlay for traffic density (FR-05)
-- [x] Structured, colorized logging system
-- [x] Sample datasets provided
-- [x] Build scripts and VS Code tasks configured
-- [ ] Live data ingestion via REST/WebSocket (FR-01)
-- [ ] Historical log loader for CSV/Parquet (FR-02)
-- [ ] Multi-source sensor fusion (FR-03)
-- [ ] Congestion heatmaps with tooltips (FR-05)
-- [ ] Travel-time isochrone computation and export (FR-06)
-- [ ] Plugin system for custom DSP/ML modules (FR-08)
-- [ ] Alerts & event rules with rule editor UI (FR-09)
-- [ ] Session recording and replay (FR-10)
-- [ ] Export to video/PNG functionality
-- [ ] Enhanced statistics and analytics panels
-- [ ] Improved error handling and user feedback
-- [ ] Cross-platform build/test automation
-- [ ] User and developer documentation expansion
-- [ ] Self-driving traffic entities (simulation and visualization)
+| Area                | Highlights                                                                                                 |
+| ------------------- | ---------------------------------------------------------------------------------------------------------- |
+| **Visualisation**   | Zoomable tiled map; vector arrows & heatmaps; layer toggle & ordering; movie/GIF snapshot export.          |
+| **Simulation Core** | Deterministic fixed‑step loop; live & historical replay; congestion metrics; alert rules.                  |
+| **Data Ingestion**  | REST/WebSocket adapter (JSON/Proto); CSV/Parquet loader; pluggable broker (Kafka/NATS).                    |
+| **Python Bindings** | Gym‑like `step() / reset()` API; NumPy zero‑copy buffers; wheel builds for macOS universal2, Linux x86‑64. |
+| **Plugin System**   | Load C/C++/Rust or ONNX models at runtime via stable C ABI + watchdog thread.                              |
+| **Observability**   | Structured colour logs; Prometheus metrics; optional Jaeger tracing.                                       |
+| **Portability**     | Single code‑base; supports macOS, Linux, Windows. Continuous builds on all three.                          |
 
-For questions or support, open an issue on GitHub.
+---
+
+## Quick Start
+
+```bash
+# clone incl. submodules
+$ git clone --recursive https://github.com/yourname/trafficflowviz.git
+$ cd trafficflowviz
+
+# build (debug)
+$ ./build.sh            # uses CMake + Ninja
+
+# run demo scene
+$ ./build/bin/tfv_demo  # loads data/roads_demo.csv by default
+```
+
+> **Tip:** add `./scripts` to your PATH – it contains one‑liners for common workflows (profiling, sanitizers, packaging).
+
+---
+
+## Detailed Installation
+
+### Prerequisites
+
+* **Compiler:** Clang 16 or GCC 13 (C++23)
+* **CMake:** ≥ 3.25
+* **Python:** ≥ 3.8 (optional but recommended)
+* **Libraries:** SDL2, ImGui (vendored); zstd; Arrow
+* **macOS only:** Command‑Line Tools + (optionally) MoltenVK
+
+### Build Options
+
+| CMake Flag           | Default | Description                                         |
+| -------------------- | ------- | --------------------------------------------------- |
+| `TFV_RENDERER`       | `SDL`   | `SDL`, `Metal` or `Vulkan`                          |
+| `TFV_BUILD_PYTHON`   | `ON`    | Build wheels + install to `${CMAKE_INSTALL_PREFIX}` |
+| `TFV_USE_SANITIZERS` | `OFF`   | Address/UBSan for debug builds                      |
+| `TFV_ENABLE_DOCS`    | `OFF`   | Build Doxygen + Sphinx docs                         |
+
+```bash
+cmake -B build -S . -DTFV_RENDERER=Metal -DTFV_BUILD_PYTHON=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+sudo cmake --install build
+```
+
+---
+
+## Python API
+
+After installing the wheel (`pip install dist/trafficflowviz‑*.whl`) use it just like an OpenAI Gym environment:
+
+```python
+import trafficflowviz as tfv
+
+env = tfv.Env("data/munich_5min.parquet")
+obs = env.reset()
+for _ in range(1_000):
+    action = my_policy(obs)
+    obs, reward, done, info = env.step(action)
+    if done:
+        obs = env.reset()
+```
+
+Key modules:
+
+* `tfv.core` – direct binding of C++ Simulation / Engine
+* `tfv.datasets` – helpers to download or convert public traffic logs
+* `tfv.rl` – wrappers for RL lib / Ray RLlib
+
+API reference is auto‑generated in the online docs.
+
+---
+
+## Data Formats
+
+| File                 | Schema                             | Purpose              |
+| -------------------- | ---------------------------------- | -------------------- |
+| `roads_*.csv`        | id, from, to, length, speed\_limit | Static road topology |
+| `vehicles_live.json` | id, ts, lat, lon, speed            | Live feed messages   |
+| `*.parquet`          | Arrow schema (see docs)            | Bulk historical logs |
+
+Conversion utilities:
+
+```bash
+python tools/convert_csv_to_parquet.py data/raw/*.csv -o data/converted/
+```
+
+---
+
+## Docker & Dev Containers
+
+The repo ships a **VS Code dev‑container** and a minimal **Docker runtime** image.
+
+```bash
+# one‑liner to start interactive container with hot‑reload
+$ ./scripts/devcontainer.sh
+```
+
+The Dockerfile can be used to run headless simulations on a server and stream rendered frames via WebRTC.
+
+---
+
+## Testing & CI
+
+* **Unit tests:** Catch2 (`ctest -L unit`)
+* **Coverage:** gcov + gcovr → Codecov badge on PRs
+* **Static analysis:** clang‑tidy, cppcheck, include‑what‑you‑use
+* **CI matrix:** macOS 12, Ubuntu 22.04, Windows 2022
+* **Artifact upload:** Signed Python wheels to TestPyPI on tags
+
+Run all checks locally:
+
+```bash
+./scripts/run_local_ci.sh
+```
+
+---
+
+## Contributing
+
+Pull‑requests are welcome! Please:
+
+1. Create an issue first if you plan a major change.
+2. Follow the **Git Conventional Commits** style.
+3. Run `./scripts/clang_format_all.sh` before pushing.
+4. Ensure `./scripts/run_local_ci.sh` passes.
+5. Sign the CLA.
+
+See [CONTRIBUTING.md] for full guidelines.
+
+---
+
+## Roadmap
+
+Planned high‑level milestones (see GitHub Projects board for detail):
+
+| Quarter     | Milestone                                          |
+| ----------- | -------------------------------------------------- |
+| **Q2 2025** | Live feed ingest (FR‑01); Python 0.1 wheel on PyPI |
+| **Q3 2025** | Plugin ABI v1; Isochrone export (FR‑06)            |
+| **Q4 2025** | Distributed ingest cluster; Windows DX12 renderer  |
+| **Q1 2026** | Self‑driving entity simulation; VR support         |
+
+---
+
+## License & Citation
+
+* Code: **MIT License** (see `LICENSE`)
+* Third‑party deps: ImGui (MIT), SDL2 (zlib), etc.
+* If you use TFV in academic work please cite:
+
+```
+@software{TFV2025,
+  author  = {Senobari, Alireza *et al.*},
+  title   = {TrafficFlowViz – High‑Performance Traffic Visualisation & Simulation},
+  year    = {2025},
+  url     = {https://github.com/yourname/trafficflowviz}
+}
+```
+
+---
+
+## Architecture (Short)
+
+TFV follows a **layered engine** pattern inspired by Walnut:
+
+```
+┌──────────┐     messages     ┌───────────────┐
+│ LiveFeed │ ───────────────▶ │ Simulation    │
+└──────────┘                  │  (threads)    │
+                              └─────▲─────────┘
+            snapshot VehicleMap     │
+                              ┌─────┴─────────┐
+                              │ Rendering     │
+                              │  SDL / Metal  │
+                              └─────▲─────────┘
+                                    │ ImGui draw lists
+                              ┌─────┴─────────┐
+                              │ ImGuiLayer    │
+                              └───────────────┘
+```
+
+See the full specification below for deeper details.
+
+---

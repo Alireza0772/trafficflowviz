@@ -1,117 +1,120 @@
-# TrafficFlowViz – System Architecture
+# Full Architecture Specification
 
-## 1. Overview
-TrafficFlowViz is a modular, high-performance C++ application for real-time and historical traffic flow visualization and analytics. The architecture is designed for extensibility, cross-platform support, and integration with live and historical data sources. It is inspired by the Walnut engine, with a layered approach for rendering, UI, and simulation.
-
----
-
-## 2. High-Level System Diagram & Data Flow
-
-- **Data Sources:**
-  - Live feeds (REST/WebSocket, JSON/Protobuf) [FR-01]
-  - Historical logs (CSV/Parquet) [FR-02]
-  - Sensor fusion (loop, camera, GPS) [FR-03]
-- **Core Engine:**
-  - Manages simulation, road network, and traffic entities
-  - Coordinates all subsystems and the main loop
-- **Layered Rendering System:**
-  - SimulationLayer: core visualization, camera controls [FR-04]
-  - HeatmapLayer: congestion overlays [FR-05]
-  - ImGuiLayer: dockable UI, controls, analytics [FR-09]
-- **Extensibility:**
-  - Python scripting API [FR-07]
-  - Plugin system for DSP/ML modules [FR-08]
-  - Self-driving traffic entities (planned)
-- **Output:**
-  - Real-time visualization, alerts, analytics, export (video/PNG, GeoJSON)
+> The remainder of this document replaces the old `ARCHITECTURE.md` and expands every subsystem in depth.
 
 ---
 
-## 3. Core Components & Responsibilities
+## 1. Design Goals
 
-### Engine
-- Central coordinator: initializes window, renderer, simulation, and layers
-- Handles main loop (update, render, event dispatch)
-- Manages plugin and scripting integration
+1. **Real‑time first**: 60 FPS @ 1080p on laptop GPUs.
+2. **Deterministic replay**: identical outputs for identical seeds/logs.
+3. **Research‑friendly**: painless Python import; rewind/step semantics.
+4. **Portable & future‑proof**: abstracted renderers; C ABI plugins.
+5. **Observable**: every message/metric traceable via logs or Prometheus.
 
-### Layer System
-- Each layer encapsulates a feature (simulation, heatmap, UI, etc.)
-- Layers are managed by LayerStack (z-order, add/remove, event propagation)
-- Layers can be toggled, reordered, or extended at runtime
+## 2. High‑Level Component Diagram
 
-#### Key Layers
-- **SimulationLayer:**
-  - Renders vehicles, roads, and self-driving entities
-  - Handles camera and user interaction
-- **HeatmapLayer:**
-  - Visualizes congestion and speed ratios
-  - Supports tooltips and overlays
-- **ImGuiLayer:**
-  - Provides dockable, resizable UI
-  - Hosts analytics, controls, alerts, and rule editor
+```
+                  +-----------------+
+                  |  UI (ImGui)     |
+                  +--------+--------+
+                           |
++---------+  events  +-----v-----+  snap  +-------------+
+| Window  +<-------->+ LayerStack+<------>+SceneRenderer|
++---------+          +-----+-----+        +-------------+
+                           | update/render
+                           v
+                     +-----+----+
+                     |Simulation|  owns  ┌──────────────┐
+                     +-----+----+--------> RoadNetwork  |
+                           |             └──────────────┘
+                           |             ┌──────────────┐
+                           +-------------> Vehicles     |
+                           |   snapshot  └──────────────┘
+           ingest (async)  |
++-----------+  RingQueue  +v+
+| LiveFeed  +-------------> |   (lock‑free)
++-----------+              +-
+```
 
-### Rendering System
-- Abstracted for multiple backends (SDL, Metal, Vulkan, etc.)
-- SceneRenderer: draws map, vehicles, and overlays
-- HeatmapRenderer: specialized for congestion visualization
+## 3. Threading Model
 
-### Data & Integration
-- CSVLoader: loads road and vehicle data
-- LiveFeed: ingests real-time data (auto-reconnect, JSON/Protobuf)
-- RecordingManager: session recording and replay
-- Python bindings: exposes simulation and analytics to Python
-- Plugin loader: loads and sandboxes C/C++/Rust modules
+* **Main thread** – window events, LayerStack update/render.
+* **Simulation thread** – fixed‑step `Simulation::update()`; owns mutable state; publishes snapshots via `std::atomic<shared_ptr<const State>>` double‑buffer.
+* **Ingest thread** – decodes WebSocket/Proto messages and writes into a ring buffer consumed by Simulation.
+* **Logger thread** – drains a bounded MPSC queue (`LoggingManager`).
 
-### Traffic Entities
-- Supports both human-driven and self-driving vehicles (planned)
-- Entities are extensible for future ML/AI integration
+Locks are avoided during rendering; the renderer consumes an immutable vehicle snapshot.
 
-### Logging System
-- Structured, colorized, thread-safe logging (console & file)
-- Parameterized macros for consistent, filterable logs
+## 4. Data Ingestion Pipeline
+
+1. **Transport:** Compile‑time choice between Kafka consumer or vanilla WebSocket.
+2. **Decoder:** JSON → Struct or Proto via `protozero`.
+3. **Queue:** Lock‑free ring with back‑pressure (drops oldest on overflow).
+4. **Merger:** Simulation thread merges updates, resolves duplicates and applies clock skew heuristic.
+
+## 5. Simulation Core
+
+* **RoadNetwork** – graph of segments & intersections; supports contraction hierarchy for path‑finding.
+* **Vehicle** – id, pos (segment + offset), vel, heading.
+* **SegmentStatistics** – ring‑buffer of last N speed samples; congestion level (0‑1).
+* **Fixed‑step loop:** `for t in range(0, dt, step)`; ensures deterministic updates independent of FPS.
+* **Alerts:** simple rule engine evaluating segment stats each stat window.
+
+## 6. Rendering Pipeline
+
+* **SceneRenderer** – records draw commands into an ImGui draw list (for SDL) or into MTL command buffer (Metal).
+* **HeatmapRenderer** – screen‑space pass writing to a colour ramp texture.
+* **Camera** – orthographic; supports pan/zoom & pixel‑perfect snapping.
+* **Anti‑aliasing:** MSAA x4 optional per‑renderer.
+
+## 7. Python Binding Internals
+
+* **scikit‑build‑core** drives CMake build → wheel.
+* Uses **pybind11** with custom type‑casters for `glm::vec` & `std::unordered_map`.
+* Zero‑copy NumPy views for vehicle arrays via `py::array_t` with capsule deleter.
+* GIL released during long C++ calls.
+
+## 8. Plugin System
+
+* C ABI: `tfv_plugin_create(const tfv::HostAPI*)` returns a `tfv_plugin*` vtable.
+* Plugins loaded via `dlopen`/`LoadLibrary` into isolated thread; watchdog restarts on panic.
+* Host exposes subset of API (road lookups, vehicle snapshot, logger).
+
+## 9. Deployment Topologies
+
+1. **Laptop demo** – all local; ingest from CSV; Metal renderer.
+2. **Research cluster** – ingest pod (Kafka), TFV headless pods producing snapshots to Redis, web front‑end streams WebGL overlays.
+3. **Control room** – TFV wall display; alerts webhook → Grafana.
+
+## 10. Performance Guidelines
+
+* Avoid allocation in render loop – reuse vertex buffers.
+* Use SIMD (glm::vec) for vector math; compile with `-ffast-math` (non‑LR testing builds).
+* Batch vehicles by segment to reduce state changes.
+* Profile with Tracy (`./scripts/run_tracy.sh`).
+
+## 11. Security & Compliance
+
+* TLS 1.3 everywhere; cert pinning for ingest feeds.
+* All PII stripped at ingest boundary; only hashed IDs leave cluster.
+* Follows GDPR data‑minimisation principle; optional on‑prem deployment.
+
+## 12. Mapping to Requirements
+
+| Requirement                | Section | Implementation Notes                   |
+| -------------------------- | ------- | -------------------------------------- |
+| **FR‑01** Live Ingest      | §4      | Kafka/NATS consumer, ring buffer merge |
+| **FR‑04** Map Visuals      | §6      | SDL/Metal renderer, heatmap layer      |
+| **FR‑07** Python API       | §7      | pybind11 wheel, Gym adapter            |
+| **NFR‑01** Performance     | §10     | 60 FPS, batching, SIMD                 |
+| **NFR‑05** Maintainability | §7, §8  | plugin ABI, 85 % coverage              |
+
+## 13. Future Work
+
+* Vulkan & DirectX12 renderers via RenderGraph.
+* Multi‑GPU simulation decomposition (city blocks split).
+* WASM/WebGL build for browser‑only visualisation.
+* Edge ingest with eBPF sensors pushing Proto via QUIC.
 
 ---
-
-## 4. Extensibility & Future-Proofing
-- **Plugin System:** Load custom analytics, DSP, or ML modules at runtime (FR-08)
-- **Python Scripting:** Automate scenarios, analytics, and orchestration (FR-07)
-- **Self-Driving Entities:** Simulate and visualize autonomous vehicles (planned)
-- **Layer Serialization:** Save/load UI and visualization state
-- **Cross-Platform:** Designed for macOS, Linux, Windows (NFR-07)
-
----
-
-## 5. Mapping to Functional Requirements
-| FR    | Component(s)                   | Notes                        |
-| ----- | ------------------------------ | ---------------------------- |
-| FR-01 | LiveFeed, Engine               | Real-time data ingestion     |
-| FR-02 | CSVLoader, RecordingManager    | Historical log loading       |
-| FR-03 | LiveFeed, Data Fusion          | Multi-source sensor fusion   |
-| FR-04 | SimulationLayer, SceneRenderer | Map-based visualization      |
-| FR-05 | HeatmapLayer, HeatmapRenderer  | Congestion overlays          |
-| FR-06 | Algorithms, Export             | Isochrone computation/export |
-| FR-07 | Python Bindings                | Scripting API                |
-| FR-08 | Plugin Loader                  | Runtime extensibility        |
-| FR-09 | ImGuiLayer, Alerts             | Alerts & event rules         |
-| FR-10 | RecordingManager               | Session recording/replay     |
-
----
-
-## 6. Performance & Cross-Platform Considerations
-- Optimized for ≥ 60 fps at 1080p (NFR-01)
-- Thread-safe logging and data ingestion
-- Designed for horizontal scalability and future distributed deployment
-- CI/CD for macOS, Linux, Windows
-
----
-
-## 7. Future Improvements
-- Additional visualization layers (e.g., isochrones, ML overlays)
-- More renderer backends (Metal, Vulkan)
-- Enhanced plugin sandboxing and monitoring
-- Full support for self-driving traffic entities
-- Layer serialization and workspace export
-- Advanced analytics and reporting modules
-
----
-For detailed requirements, see [Product Requirements Document.md](Product%20Requirments%20Document.md).

@@ -1,8 +1,8 @@
 // --- SDLWindow.cpp ---
 #include "platform/SDL/SDLWindow.hpp"
-// #include "core/Events/ApplicationEvent.hpp" // Include your specific event headers
-#include "core/Event.hpp"
-#include "core/Events/WindowResizeEvent.hpp"
+#include "core/Events/KeyEvent.hpp"
+#include "core/Events/MouseEvent.hpp"
+#include "core/Events/WindowEvent.hpp"
 #include "utils/LoggingManager.hpp" // Use your logger
 #include <imgui.h>                  // Needed for ImGui context check maybe
 #include <stdexcept>                // For exceptions
@@ -14,8 +14,8 @@
 namespace tfv
 {
 
-    // Factory implementation (usually in IWindow.cpp or a dedicated factory file)
-    std::unique_ptr<IWindow> IWindow::create(const WindowProps& props)
+    // Factory implementation (usually in Window.cpp or a dedicated factory file)
+    std::unique_ptr<Window> Window::create(const WindowProps& props)
     {
         // Later, you could switch here based on compile flags or config
         return std::make_unique<SDLWindow>();
