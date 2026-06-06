@@ -78,12 +78,28 @@ namespace tfv
         /** All signs in the network. */
         const std::unordered_map<uint32_t, Sign>& signs() const { return m_signs; }
 
+        /** Create signalized intersections at every node with >= minApproaches
+         *  incoming segments (Phase 4). Idempotent (rebuilds from scratch). */
+        void buildIntersections(int minApproaches = 2);
+
+        /** The color a vehicle on `segmentId` faces at its toNode
+         *  (Green if the toNode is not signalized). */
+        LightColor approachColor(uint32_t segmentId) const;
+
+        /** Signalized intersections (keyed by nodeId); mutable for the controller. */
+        std::unordered_map<uint32_t, Intersection>& intersections() { return m_intersections; }
+        const std::unordered_map<uint32_t, Intersection>& intersections() const
+        {
+            return m_intersections;
+        }
+
         inline void clear()
         {
             m_seg.clear();
             m_segments.clear();
             m_nodes.clear();
             m_signs.clear();
+            m_intersections.clear();
         }
 
       private:
@@ -93,6 +109,7 @@ namespace tfv
         std::unordered_map<uint32_t, RoadSegment> m_segments;
         std::unordered_map<uint32_t, Node> m_nodes;
         std::unordered_map<uint32_t, Sign> m_signs;
+        std::unordered_map<uint32_t, Intersection> m_intersections; // keyed by nodeId
     };
 
 } // namespace tfv

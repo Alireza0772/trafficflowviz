@@ -46,6 +46,27 @@ namespace tfv
         uint8_t allowedTurns{0x0F}; // bitmask over {straight,left,right,u}; default all
     };
 
+    // Traffic-light color (Phase 4).
+    enum class LightColor : uint8_t
+    {
+        Green = 0,
+        Amber,
+        Red
+    };
+
+    // A signalized intersection at a node. A single central controller cycles which
+    // incoming approach is "active": its color goes Green -> Amber -> Red (all-red
+    // clearance) before advancing to the next approach. Non-active approaches are
+    // always Red. (Phase 4)
+    struct Intersection
+    {
+        uint32_t nodeId{0};
+        std::vector<uint32_t> approaches;          // incoming segment ids (sorted ascending)
+        uint32_t currentPhase{0};                  // index into approaches that is active
+        LightColor activeColor{LightColor::Green}; // color shown to the active approach
+        uint32_t ticksInPhase{0};                  // ticks elapsed in the current color
+    };
+
     // Note: Alert struct is defined in AlertManager.hpp to avoid duplication
 
     // Vehicle representation

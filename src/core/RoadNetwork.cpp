@@ -31,6 +31,8 @@ namespace tfv
         m_seg.clear();
         m_segments.clear();
         m_nodes.clear();
+        m_signs.clear();         // a bare reload leaves no stale signs ...
+        m_intersections.clear(); // ... or dangling intersections
 
         std::ifstream file(path);
         if(!file.is_open())
@@ -114,8 +116,9 @@ namespace tfv
                 // Add to segment map
                 m_segments[segId] = segment;
 
-                // Update node's outgoing segments (single source of truth for routing)
+                // Update node adjacency (single source of truth for routing + signals)
                 m_nodes[segment.fromNode].outgoing.push_back(segId);
+                m_nodes[segment.toNode].incoming.push_back(segId);
             }
         }
         LOG_INFO("loaded {count} segments from {file}", PARAM(count, m_seg.size()),
@@ -240,6 +243,10 @@ namespace tfv
             fromNode->outgoing.push_back(segment.id);
         }
 
+        // Update the destination node's incoming list (signals/intersections).
+        if(auto* toNode = getNode(segment.toNode))
+            toNode->incoming.push_back(segment.id);
+
         // Create visual segment
         RoadVisual vis;
         vis.id = segment.id;
@@ -280,6 +287,38 @@ namespace tfv
     {
         auto it = m_signs.find(id);
         return (it != m_signs.end()) ? &it->second : nullptr;
+    }
+
+    void RoadNetwork::buildIntersections(int minApproaches)
+    {
+        m_intersections.clear();
+        for(const auto& [nodeId, node] : m_nodes)
+        {
+            if(static_cast<int>(node.incoming.size()) < minApproaches)
+                continue;
+            Intersection x;
+            x.nodeId = nodeId;
+            x.approaches = node.incoming;
+            std::sort(x.approaches.begin(), x.approaches.end()); // deterministic phase order
+            x.approaches.erase(std::unique(x.approaches.begin(), x.approaches.end()),
+                               x.approaches.end()); // robust to duplicate approaches
+            m_intersections[nodeId] = std::move(x);
+        }
+        LOG_INFO("built {count} signalized intersections", PARAM(count, m_intersections.size()));
+    }
+
+    LightColor RoadNetwork::approachColor(uint32_t segmentId) const
+    {
+        const RoadSegment* seg = getSegment(segmentId);
+        if(!seg)
+            return LightColor::Green;
+        auto it = m_intersections.find(seg->toNode);
+        if(it == m_intersections.end())
+            return LightColor::Green; // unsignalized node
+        const Intersection& x = it->second;
+        if(x.currentPhase < x.approaches.size() && x.approaches[x.currentPhase] == segmentId)
+            return x.activeColor;     // the active approach (green/amber/all-red)
+        return LightColor::Red;       // a non-active approach is always red
     }
 
     bool RoadNetwork::loadSignsCSV(const std::filesystem::path& path)

@@ -10,6 +10,7 @@
 
 #include "agents/Brain.hpp"
 #include "agents/IdmParams.hpp"
+#include "control/LightController.hpp"
 #include "core/RoadNetwork.hpp"
 #include "core/TrafficEntity.hpp"
 #include "core/World.hpp"
@@ -116,6 +117,9 @@ namespace tfv
         std::unordered_map<uint64_t, uint32_t> m_signCleared; // id -> stop/yield sign id cleared on its segment
         uint64_t m_tick{0};                         // simulation tick counter
         float m_decisionHz{10.0f};                  // brain decision rate (Hz)
+
+        // Central traffic-light controller (Phase 4)
+        LightController m_lightController;
     };
 
 } // namespace tfv

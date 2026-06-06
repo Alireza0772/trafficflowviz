@@ -38,8 +38,10 @@ namespace tfv
         inline constexpr int Congestion = 5;             // segment congestion, 0..1
         inline constexpr int DistToNextIntersection = 6; // (1-pos)*length / OBS_RANGE_SCALE (Phase 3)
         inline constexpr int LaneCount = 7;              // lane count / 8 (Phase 3)
-        // Signal/sign (idx 8-10); 8-9 reserved for traffic lights (Phase 4)
-        inline constexpr int NearestSignType = 10; // normalized sign-type code ahead (Phase 3)
+        // Signal/sign (idx 8-10)
+        inline constexpr int SignalPhase = 8;         // light color ahead: green 0, amber .5, red 1 (Phase 4)
+        inline constexpr int SignalTimeToChange = 9;  // reserved (refined later)
+        inline constexpr int NearestSignType = 10;    // normalized sign-type code ahead (Phase 3)
         // Front sector (idx 11-13 of the 4-sector block 11..22)
         inline constexpr int FrontGap = 11;       // bumper gap (m) / OBS_RANGE_SCALE, clamped to 1
         inline constexpr int FrontRelSpeed = 12;  // (v_self - v_leader) / OBS_SPEED_SCALE

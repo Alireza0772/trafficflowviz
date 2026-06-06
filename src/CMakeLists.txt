@@ -10,6 +10,9 @@ set(TRAFFICFLOWVIZ_SOURCES
     agents/RuleBasedBrain.cpp
     agents/BrainRegistry.cpp
 
+    # Control
+    control/LightController.cpp
+
     # Rendering component sources
     rendering/Renderer.cpp
     rendering/SceneRenderer.cpp

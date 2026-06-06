@@ -94,6 +94,15 @@ namespace tfv
         m_brain = makeBrain(cfg.getString("sim.default_brain", "rule"), m_idm);
         m_brain->reset(TFV_CONFIG().getMasterSeed());
 
+        // Signalize intersections and configure the single central light controller.
+        m_roadNetwork->buildIntersections(2);
+        LightTiming lt;
+        lt.greenSec = cfg.getFloat("light.green_sec", 4.0f);
+        lt.amberSec = cfg.getFloat("light.amber_sec", 1.0f);
+        lt.allRedSec = cfg.getFloat("light.all_red_sec", 0.5f);
+        m_lightController = LightController(lt);
+        m_lightController.reset(*m_roadNetwork);
+
         // Store vehicles (sorted by id), align velocity to lane direction (avoids a
         // first-tick heading pop), and initialize per-segment occupancy.
         m_world.load(std::move(vehicles));
@@ -197,6 +206,27 @@ namespace tfv
                 }
             }
         }
+        // Traffic-light obedience (Phase 4): a red/amber light at the segment end is a
+        // conditional virtual stop-leader, merged more-restrictively into the front
+        // sector. On green there is no constraint and the vehicle proceeds.
+        const LightColor lc =
+            m_roadNetwork ? m_roadNetwork->approachColor(self.segmentId) : LightColor::Green;
+        o[obs_idx::SignalPhase] =
+            (lc == LightColor::Red) ? 1.0f : (lc == LightColor::Amber ? 0.5f : 0.0f);
+        if(seg && (lc == LightColor::Red || lc == LightColor::Amber))
+        {
+            float gapM = (1.0f - self.position) * seg->length - 0.5f * self.length;
+            if(gapM < 0.1f)
+                gapM = 0.1f;
+            const float lightGapNorm = std::min(gapM / OBS_RANGE_SCALE, 1.0f);
+            if(!hasFront || lightGapNorm < frontGapNorm)
+            {
+                frontGapNorm = lightGapNorm;
+                frontRelSpeed = vSelf / OBS_SPEED_SCALE; // stationary stop line at the node
+                hasFront = true;
+            }
+        }
+
         o[obs_idx::FrontGap] = frontGapNorm;
         o[obs_idx::FrontRelSpeed] = frontRelSpeed;
         o[obs_idx::FrontHasLeader] = hasFront ? 1.0f : 0.0f;
@@ -369,6 +399,16 @@ namespace tfv
                     }
                 }
 
+                // Red-light hard stop-line: bounded IDM braking cannot always halt in
+                // time, so never let a vehicle cross a node while its approach is RED.
+                // (Amber still permits clearing the dilemma zone.)
+                if(v.position > 1.0f &&
+                   m_roadNetwork->approachColor(v.segmentId) == LightColor::Red)
+                {
+                    v.position = 1.0f - 1e-4f;
+                    v.vel = glm::vec2(0.0f, 0.0f);
+                }
+
                 // If the vehicle passes the end of its segment, hand off to the next.
                 if(v.position > 1.f)
                 {
@@ -462,6 +502,11 @@ namespace tfv
 
             m_timeSinceLastUpdate = 0.0;
         }
+
+        // Advance the single central traffic-light controller for the next tick
+        // (deterministic; vehicles this tick read the start-of-tick signal state).
+        if(m_roadNetwork)
+            m_lightController.step(*m_roadNetwork, dt);
     }
 
     VehicleMap Simulation::snapshot() const

@@ -28,7 +28,7 @@
 using namespace tfv;
 
 // Committed reference digest (0 = not yet pinned; run with --print-hash to obtain).
-static constexpr uint64_t kGolden = 0x1be470af7fcd83faULL;
+static constexpr uint64_t kGolden = 0x0848c7f62a07b56bULL;
 
 namespace
 {
@@ -79,7 +79,7 @@ namespace
 
     std::vector<Vehicle> makeScenarioVehicles()
     {
-        std::vector<Vehicle> v(3);
+        std::vector<Vehicle> v(4);
         // Leader on seg0 heading for the fork (destNode 4 -> routes via seg3 at node 2).
         v[0].id = 1;
         v[0].segmentId = 0;
@@ -96,6 +96,12 @@ namespace
         v[2].segmentId = 1;
         v[2].position = 0.30f;
         v[2].vel = {0.0f, 0.0f};
+        // Vehicle on seg4 (4->1) approaching the SIGNALIZED node 1: must stop at red,
+        // then proceed on green. It is alone on seg4, so a stop there is the light.
+        v[3].id = 4;
+        v[3].segmentId = 4;
+        v[3].position = 0.90f; // close to node 1 so it meets the first (red) phase
+        v[3].vel = {4.0f, 0.0f};
         return v;
     }
 
@@ -107,6 +113,8 @@ namespace
         bool anyNonFinite{false};
         bool sawStop{false};         // a vehicle reached ~0 speed near the STOP sign on seg0
         bool leaderProceeded{false}; // the stopping leader (id 1) later left seg0 (no deadlock)
+        bool sawLightStop{false};    // veh 4 stopped at the red light at node 1 (end of seg4)
+        bool lightProceeded{false};  // veh 4 later cleared node 1 onto seg0 (green released it)
     };
 
     RunResult runOnce()
@@ -129,6 +137,10 @@ namespace
                     r.sawStop = true;
                 if(id == 1 && v.segmentId == 0 && v.position > 0.86f)
                     r.leaderProceeded = true; // cleared the STOP (0.85) and moved past it
+                if(id == 4 && v.segmentId == 4 && v.position > 0.9f && glm::length(v.vel) < 0.5f)
+                    r.sawLightStop = true; // halted at the red light at node 1
+                if(id == 4 && v.segmentId == 0)
+                    r.lightProceeded = true; // released on green, crossed node 1 onto seg0
             }
         }
 
@@ -236,8 +248,18 @@ int main(int argc, char** argv)
         std::printf("FAIL: the stopping leader never proceeded (STOP-sign deadlock)\n");
         ++failures;
     }
+    if(!a.sawLightStop)
+    {
+        std::printf("FAIL: vehicle 4 never stopped at the red light\n");
+        ++failures;
+    }
+    if(!a.lightProceeded)
+    {
+        std::printf("FAIL: vehicle 4 never proceeded through the light (green never released)\n");
+        ++failures;
+    }
 
     if(failures == 0)
-        std::printf("PASS: golden_trajectory (5 gates)\n");
+        std::printf("PASS: golden_trajectory (7 gates)\n");
     return failures == 0 ? 0 : 1;
 }

@@ -94,7 +94,8 @@ namespace tfv
         const RoadNetwork* getNetwork() const { return m_net; }
 
       private:
-        void drawSigns(); // draw traffic signs as small colored markers
+        void drawSigns();  // draw traffic signs as small colored markers
+        void drawLights(); // draw traffic-light state per intersection approach
 
         Renderer* m_r;
         const RoadNetwork* m_net{nullptr};

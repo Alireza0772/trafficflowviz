@@ -14,9 +14,49 @@ namespace tfv
         vehR.draw(vehicles, m_net);
 
         drawSigns();
+        drawLights();
 
         // Store the snapshot for later renders
         m_lastSnapshot = vehicles;
+    }
+
+    void SceneRenderer::drawLights()
+    {
+        if(!m_net || m_net->intersections().empty())
+            return;
+        const auto& segs = m_net->segments();
+        std::unordered_map<uint32_t, const RoadVisual*> byId;
+        byId.reserve(segs.size());
+        for(const auto& s : segs)
+            byId.emplace(s.id, &s);
+
+        for(const auto& [nodeId, x] : m_net->intersections())
+        {
+            (void)nodeId;
+            for(uint32_t segId : x.approaches)
+            {
+                auto it = byId.find(segId);
+                if(it == byId.end())
+                    continue;
+                const RoadVisual* rv = it->second;
+
+                // Marker near the stop line (end of the approach segment).
+                const float t = 0.92f;
+                const float wx = rv->x1 + (rv->x2 - rv->x1) * t;
+                const float wy = rv->y1 + (rv->y2 - rv->y1) * t;
+                const int sx = static_cast<int>(wx * m_scale) + m_panX;
+                const int sy = static_cast<int>(wy * m_scale) + m_panY;
+
+                switch(m_net->approachColor(segId))
+                {
+                case LightColor::Green: m_r->setColor(40, 220, 40, 255); break;
+                case LightColor::Amber: m_r->setColor(240, 200, 40, 255); break;
+                case LightColor::Red:   m_r->setColor(230, 40, 40, 255); break;
+                }
+                const int sz = std::max(6, static_cast<int>(6 * m_scale));
+                m_r->fillRect(sx - sz / 2, sy - sz / 2, sz, sz);
+            }
+        }
     }
 
     void SceneRenderer::drawSigns()
