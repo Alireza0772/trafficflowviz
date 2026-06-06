@@ -12,6 +12,7 @@
 //   4) IDM + sign invariants : no NaN/Inf; speeds bounded; a free vehicle accelerates;
 //                              a vehicle actually stops at the STOP sign.
 
+#include "agents/Action.hpp"
 #include "core/Configuration.hpp"
 #include "core/RoadNetwork.hpp"
 #include "core/Simulation.hpp"
@@ -28,7 +29,8 @@
 using namespace tfv;
 
 // Committed reference digest (0 = not yet pinned; run with --print-hash to obtain).
-static constexpr uint64_t kGolden = 0xae287e07b4befaf0ULL;
+static constexpr uint64_t kGolden = 0x9cb6732614cb624cULL; // hashes laneIndex (Phase 6)
+static constexpr uint64_t kGoldenMultiLane = 0x9a695a4adfbfd3e7ULL; // Gate 9 overtake
 
 namespace
 {
@@ -115,6 +117,7 @@ namespace
         bool leaderProceeded{false}; // the stopping leader (id 1) later left seg0 (no deadlock)
         bool sawLightStop{false};    // veh 4 stopped at the red light at node 1 (end of seg4)
         bool lightProceeded{false};  // veh 4 later cleared node 1 onto seg0 (green released it)
+        bool anyLaneChange{false};   // any vehicle left lane 0 (must NOT happen: single-lane net)
     };
 
     RunResult runOnce()
@@ -141,6 +144,8 @@ namespace
                     r.sawLightStop = true; // halted at the red light at node 1
                 if(id == 4 && v.segmentId == 0)
                     r.lightProceeded = true; // released on green, crossed node 1 onto seg0
+                if(v.laneIndex != 0)
+                    r.anyLaneChange = true; // single-lane network -> MOBIL must be a no-op
             }
         }
 
@@ -163,6 +168,7 @@ namespace
                 r.anyNonFinite = true;
             mix(id);
             mix(v.segmentId);
+            mix(static_cast<uint64_t>(v.laneIndex)); // lane state is digest-protected (Phase 6)
             mix(static_cast<uint64_t>(static_cast<int64_t>(std::llround(v.position * 1e6))));
             mix(static_cast<uint64_t>(static_cast<int64_t>(std::llround(speed * 1e3))));
             r.maxSpeed = std::max(r.maxSpeed, speed);
@@ -232,6 +238,97 @@ static bool crossSegmentGate()
     return withLead < noLead - 2.0f; // braked for the car just past the node
 }
 
+// Gate 9: MOBIL overtake on a 2-lane segment. A fast follower behind a slow truck
+// (lane 0) must change to lane 1, pass it, and end ahead — deterministically, with a
+// turn signal and without ever overlapping another car in the same lane.
+struct MultiLaneResult
+{
+    uint64_t digest{0};
+    bool sawLaneChange{false};
+    bool overtook{false};
+    bool sawSignal{false};
+    bool overlap{false};
+};
+static MultiLaneResult multiLaneRun()
+{
+    RoadNetwork net;
+    Node n1, n2;
+    n1.id = 1;
+    n1.pos = {0, 0};
+    n2.id = 2;
+    n2.pos = {2000, 0};
+    net.addNode(n1);
+    net.addNode(n2);
+    RoadSegment s;
+    s.id = 0;
+    s.fromNode = 1;
+    s.toNode = 2;
+    s.dir = {1, 0};
+    s.length = 2000.0f;
+    s.speedLimit = 13.9f;
+    s.lanes = 2;
+    net.addSegment(s);
+
+    std::vector<Vehicle> v(2);
+    v[0].id = 1; // slow truck in lane 0
+    v[0].segmentId = 0;
+    v[0].position = 0.105f;
+    v[0].laneIndex = 0;
+    v[0].vel = {3.0f, 0.0f};
+    v[0].maxSpeed = 3.0f;
+    v[1].id = 2; // fast follower in lane 0, just behind
+    v[1].segmentId = 0;
+    v[1].position = 0.100f;
+    v[1].laneIndex = 0;
+    v[1].vel = {10.0f, 0.0f};
+
+    Simulation sim(&net);
+    sim.initialize(std::move(v));
+
+    MultiLaneResult r;
+    VehicleMap snap;
+    const double dt = 0.02;
+    for(int t = 0; t < 600; ++t)
+    {
+        sim.update(dt);
+        snap = sim.snapshot();
+        const Vehicle& f = snap.at(2);
+        if(f.laneIndex == 1)
+            r.sawLaneChange = true;
+        if(f.lightBits & (light::LEFT | light::RIGHT))
+            r.sawSignal = true;
+        const Vehicle& a = snap.at(1);
+        if(a.segmentId == f.segmentId && a.laneIndex == f.laneIndex)
+        {
+            const float gap =
+                std::fabs(a.position - f.position) * 2000.0f - 0.5f * (a.length + f.length);
+            if(gap < 2.0f) // < s0: an overlap / two-into-one-gap
+                r.overlap = true;
+        }
+    }
+    const Vehicle& leadEnd = snap.at(1);
+    const Vehicle& folEnd = snap.at(2);
+    r.overtook = (folEnd.segmentId == leadEnd.segmentId && folEnd.position > leadEnd.position);
+
+    uint64_t h = 1469598103934665603ULL;
+    auto mix = [&](uint64_t x) {
+        h ^= x;
+        h *= 1099511628211ULL;
+    };
+    for(uint64_t id : {uint64_t{1}, uint64_t{2}})
+    {
+        const Vehicle& vv = snap.at(id);
+        const float sp = glm::length(vv.vel);
+        mix(id);
+        mix(vv.segmentId);
+        mix(static_cast<uint64_t>(vv.laneIndex));
+        mix(static_cast<uint64_t>(static_cast<int64_t>(std::llround(vv.position * 1e6))));
+        mix(static_cast<uint64_t>(static_cast<int64_t>(std::llround(sp * 1e3))));
+    }
+    r.digest = h;
+    return r;
+}
+
 int main(int argc, char** argv)
 {
     bool printOnly = (argc > 1 && std::strcmp(argv[1], "--print-hash") == 0);
@@ -263,6 +360,11 @@ int main(int argc, char** argv)
     std::printf("digest run2 = 0x%016llx\n", (unsigned long long)b.digest);
     std::printf("maxSpeed=%.3f free=%.3f sawStop=%d nonFinite=%d\n", a.maxSpeed,
                 a.freeVehicleSpeed, a.sawStop ? 1 : 0, a.anyNonFinite ? 1 : 0);
+
+    MultiLaneResult ml = multiLaneRun();
+    std::printf("multilane digest = 0x%016llx (laneChange=%d overtook=%d signal=%d overlap=%d)\n",
+                (unsigned long long)ml.digest, ml.sawLaneChange ? 1 : 0, ml.overtook ? 1 : 0,
+                ml.sawSignal ? 1 : 0, ml.overlap ? 1 : 0);
 
     if(printOnly)
         return 0;
@@ -321,8 +423,47 @@ int main(int argc, char** argv)
         std::printf("FAIL: cross-segment leader did not make the follower brake\n");
         ++failures;
     }
+    if(a.anyLaneChange)
+    {
+        std::printf("FAIL: a vehicle changed lanes on the single-lane network (MOBIL not a no-op)\n");
+        ++failures;
+    }
+    {
+        MultiLaneResult ml2 = multiLaneRun();
+        if(ml.digest != ml2.digest)
+        {
+            std::printf("FAIL: multi-lane scenario non-deterministic\n");
+            ++failures;
+        }
+        if(kGoldenMultiLane != 0ULL && ml.digest != kGoldenMultiLane)
+        {
+            std::printf("FAIL: multi-lane digest 0x%016llx != golden 0x%016llx\n",
+                        (unsigned long long)ml.digest, (unsigned long long)kGoldenMultiLane);
+            ++failures;
+        }
+        if(!ml.sawLaneChange)
+        {
+            std::printf("FAIL: follower never changed lanes to overtake\n");
+            ++failures;
+        }
+        if(!ml.overtook)
+        {
+            std::printf("FAIL: follower never overtook the slow truck\n");
+            ++failures;
+        }
+        if(ml.overlap)
+        {
+            std::printf("FAIL: two vehicles overlapped in the same lane\n");
+            ++failures;
+        }
+        if(!ml.sawSignal)
+        {
+            std::printf("FAIL: no turn signal observed during the lane change\n");
+            ++failures;
+        }
+    }
 
     if(failures == 0)
-        std::printf("PASS: golden_trajectory (8 gates)\n");
+        std::printf("PASS: golden_trajectory (9 gates)\n");
     return failures == 0 ? 0 : 1;
 }

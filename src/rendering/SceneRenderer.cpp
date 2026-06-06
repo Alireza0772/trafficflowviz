@@ -202,9 +202,11 @@ namespace tfv
             int sx = static_cast<int>(v.worldPos.x * m_scale) + m_panX;
             int sy = static_cast<int>(v.worldPos.y * m_scale) + m_panY;
 
-            // Brake light: tint red when braking; otherwise the usual green.
+            // Lights: red when braking, amber while signalling a lane change, else green.
             if(v.lightBits & light::BRAKE)
                 m_r->setColor(235, 70, 50, 255);
+            else if(v.lightBits & (light::LEFT | light::RIGHT))
+                m_r->setColor(240, 200, 40, 255);
             else
                 m_r->setColor(50, 200, 50, 255);
 

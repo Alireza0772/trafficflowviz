@@ -113,6 +113,16 @@ namespace tfv
                 // Calculate direction vector
                 segment.dir = glm::normalize(glm::vec2(r.x2 - r.x1, r.y2 - r.y1));
 
+                // Optional trailing 'lanes' column (default 1; keeps 5-column CSVs valid).
+                int lanes = 1;
+                {
+                    char c2;
+                    int L;
+                    if(ss >> c2 >> L && L >= 1)
+                        lanes = L;
+                }
+                segment.lanes = lanes;
+
                 // Add to segment map
                 m_segments[segId] = segment;
 

@@ -1,5 +1,7 @@
 #include "agents/RuleBasedBrain.hpp"
 
+#include "agents/Idm.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -16,24 +18,11 @@ namespace tfv
             float v0 = std::min(o[obs_idx::SpeedLimit] * OBS_SPEED_SCALE, m_p.v0_cap);
             v0 = std::max(v0, 0.1f); // avoid div-by-zero in the free term
 
-            // Free-road term: accelerate toward the desired speed.
-            const float aFree = m_p.a_max * (1.0f - std::pow(v / v0, m_p.delta));
-
-            float a = aFree;
-            if(o[obs_idx::FrontHasLeader] > 0.5f)
-            {
-                // Interaction term: brake for the leader (IDM desired minimum gap s*).
-                const float gap = std::max(o[obs_idx::FrontGap] * OBS_RANGE_SCALE, 0.1f);
-                const float dv = o[obs_idx::FrontRelSpeed] * OBS_SPEED_SCALE; // v - v_leader
-                const float sStar =
-                    m_p.s0 +
-                    std::max(0.0f, v * m_p.T + (v * dv) / (2.0f * std::sqrt(m_p.a_max * m_p.b_comfort)));
-                const float ratio = sStar / gap;
-                a = aFree - m_p.a_max * ratio * ratio;
-            }
-
-            // Physical clamp (also re-applied defensively by the integrator).
-            a = std::clamp(a, -m_p.b_max, m_p.a_max);
+            // IDM longitudinal acceleration (shared with the MOBIL evaluator).
+            const bool hasLeader = o[obs_idx::FrontHasLeader] > 0.5f;
+            const float gap = o[obs_idx::FrontGap] * OBS_RANGE_SCALE;     // idmAccel floors at 0.1
+            const float dv = o[obs_idx::FrontRelSpeed] * OBS_SPEED_SCALE; // v - v_leader
+            const float a = idmAccel(v, v0, gap, dv, hasLeader, m_p);
 
             Action act{};
             act.accel = a;

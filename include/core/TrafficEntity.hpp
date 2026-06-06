@@ -82,13 +82,18 @@ namespace tfv
         uint8_t lightBits{0};           // Observable lights (light:: flags); set from the action
         float length{4.5f};      // Vehicle length in meters
         float width{1.8f};       // Vehicle width in meters
+        float maxSpeed{0.0f};    // per-vehicle desired-speed cap (m/s); 0 = use segment limit
         std::string type{"car"}; // Vehicle type (car, truck, etc.)
 
         // Phase 3: lane-keeping + routing-by-intent
-        uint8_t laneIndex{0};            // current lane (lane-keeping only; no lateral motion yet)
+        uint8_t laneIndex{0};            // current lane
         std::vector<uint32_t> route;     // ordered segment ids still to traverse (empty = wander)
         std::size_t routeIdx{0};         // cursor into route
         uint32_t destNode{0};            // destination node (0 = loop/wander)
+
+        // Phase 6: lane-change render smoothing (cosmetic; never fed back into the sim)
+        uint8_t prevLaneIndex{0};        // lane before the most recent change
+        uint64_t laneChangeTick{0};      // tick of the most recent lane change
     };
 
     // Road segment (edge in the road network)

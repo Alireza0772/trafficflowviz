@@ -1,5 +1,6 @@
 #include "core/Simulation.hpp"
 #include "agents/BrainRegistry.hpp"
+#include "agents/Idm.hpp"
 #include "core/Configuration.hpp"
 #include "utils/LoggingManager.hpp"
 #include <algorithm>
@@ -136,6 +137,18 @@ namespace tfv
             m_grid.setBounds(mn - glm::vec2(cell, cell), mx + glm::vec2(cell, cell), cell);
         }
 
+        // MOBIL lane-change (Phase 6).
+        m_laneWidth = cfg.getFloat("sim.lane_width_m", 3.5f);
+        m_mobil.enabled = cfg.getInt("sim.mobil.enabled", 1) != 0;
+        m_mobil.bSafe = cfg.getFloat("sim.mobil.b_safe", 4.0f);
+        m_mobil.politeness = cfg.getFloat("sim.mobil.politeness", 0.2f);
+        m_mobil.threshold = cfg.getFloat("sim.mobil.threshold", 0.2f);
+        m_mobil.biasRight = cfg.getFloat("sim.mobil.bias_right", 0.1f);
+        m_mobil.cooldownSec = cfg.getFloat("sim.mobil.cooldown_sec", 2.0f);
+        if(m_mobil.bSafe > m_idm.b_max) // never authorize a change the integrator must hard-brake
+            m_mobil.bSafe = m_idm.b_max;
+        m_laneChangeCooldown.clear();
+
         // Store vehicles (sorted by id), align velocity to lane direction (avoids a
         // first-tick heading pop), and initialize per-segment occupancy.
         m_world.load(std::move(vehicles));
@@ -146,7 +159,7 @@ namespace tfv
                 continue;
             float sp = glm::length(v.vel);
             v.vel = segment->dir * sp;
-            v.worldPos = segWorldPos(*segment, v.position);
+            v.worldPos = segWorldPos(*segment, v.position, v.laneIndex);
             v.heading = std::atan2(segment->dir.y, segment->dir.x);
             segment->vehicleCount++;
             updateCongestion(v.segmentId);
@@ -204,6 +217,8 @@ namespace tfv
                    s->pos <= self.position + 1e-3f)
                     effLimit = std::min(effLimit, s->value);
             }
+        if(self.maxSpeed > 0.0f) // per-vehicle desired-speed cap (e.g. a slow truck); 0 = no cap
+            effLimit = std::min(effLimit, self.maxSpeed);
         o[obs_idx::SpeedLimit] = effLimit / OBS_SPEED_SCALE;
 
         const Sign* stopSign = nearestStopAhead(self);
@@ -315,6 +330,153 @@ namespace tfv
         return o;
     }
 
+    void Simulation::evaluateLaneChanges(
+        const std::vector<Vehicle>& vehs,
+        const std::unordered_map<uint32_t, std::vector<std::size_t>>& bySeg,
+        const std::vector<long>& leaderOf, std::vector<int>& desiredLaneChange)
+    {
+        if(!m_mobil.enabled || !m_roadNetwork)
+            return;
+
+        // Per-vehicle desired speed (segment limit, idm cap, optional per-vehicle cap).
+        auto v0Of = [&](const Vehicle& x, const RoadSegment& seg) -> float {
+            float lim = std::min(seg.speedLimit, m_idm.v0_cap);
+            if(x.maxSpeed > 0.0f)
+                lim = std::min(lim, x.maxSpeed);
+            return std::max(0.1f, lim);
+        };
+        // IDM accel of follower f if it were following leader leadIdx (<0 = free road).
+        auto accelWith = [&](const Vehicle& f, long leadIdx, const RoadSegment& seg) -> float {
+            const float v = glm::length(f.vel);
+            const float v0 = v0Of(f, seg);
+            if(leadIdx < 0)
+                return idmAccel(v, v0, 1e9f, 0.0f, false, m_idm);
+            const Vehicle& l = vehs[static_cast<std::size_t>(leadIdx)];
+            float gapM = (l.position - f.position) * seg.length - 0.5f * (f.length + l.length);
+            if(gapM < 0.1f)
+                gapM = 0.1f;
+            return idmAccel(v, v0, gapM, v - glm::length(l.vel), true, m_idm);
+        };
+
+        for(const auto& [segId, idxs] : bySeg)
+        {
+            const auto* seg = m_roadNetwork->getSegment(segId);
+            if(!seg)
+                continue;
+            const int laneCount = std::max(1, seg->lanes);
+            if(laneCount < 2) // single-lane: no lane change possible (load-bearing for the digest)
+                continue;
+
+            for(std::size_t si : idxs)
+            {
+                const Vehicle& self = vehs[si];
+                auto cd = m_laneChangeCooldown.find(self.id);
+                if(cd != m_laneChangeCooldown.end() && m_tick < cd->second)
+                    continue; // cooling down from a recent change
+                if((1.0f - self.position) * seg->length <= m_perceptionParams.rangeFront)
+                    continue; // never change lanes while approaching a node/sign/light
+
+                const long curLeader = leaderOf[si];
+                const float aCur = accelWith(self, curLeader, *seg);
+
+                // Current-lane follower (nearest behind in self's lane).
+                long curFollower = -1;
+                float curFollowerPos = -2e9f;
+                for(std::size_t j : idxs)
+                {
+                    if(j == si)
+                        continue;
+                    const Vehicle& o = vehs[j];
+                    if(o.laneIndex == self.laneIndex && o.position < self.position &&
+                       o.position > curFollowerPos)
+                    {
+                        curFollowerPos = o.position;
+                        curFollower = static_cast<long>(j);
+                    }
+                }
+
+                int bestDir = 0;
+                float bestIncentive = m_mobil.threshold; // must strictly beat the threshold
+                for(int dir = -1; dir <= 1; dir += 2)
+                {
+                    const int L = static_cast<int>(self.laneIndex) + dir;
+                    if(L < 0 || L >= laneCount)
+                        continue;
+
+                    long tLeader = -1, tFollower = -1;
+                    float tLeaderPos = 2e9f, tFollowerPos = -2e9f;
+                    for(std::size_t j : idxs)
+                    {
+                        if(j == si)
+                            continue;
+                        const Vehicle& o = vehs[j];
+                        if(static_cast<int>(o.laneIndex) != L)
+                            continue;
+                        if(o.position > self.position)
+                        {
+                            if(o.position < tLeaderPos)
+                            {
+                                tLeaderPos = o.position;
+                                tLeader = static_cast<long>(j);
+                            }
+                        }
+                        else if(o.position > tFollowerPos)
+                        {
+                            tFollowerPos = o.position;
+                            tFollower = static_cast<long>(j);
+                        }
+                    }
+
+                    const float aNew = accelWith(self, tLeader, *seg); // ego in the target lane
+                    if(aNew < -m_mobil.bSafe) // hard floor: don't dive behind a leader we'd slam into
+                        continue;
+
+                    // New target-lane follower, before/after ego inserts ahead of it.
+                    float aFolNew = 0.0f, aFolOld = 0.0f;
+                    if(tFollower >= 0)
+                    {
+                        aFolOld = accelWith(vehs[tFollower], tLeader, *seg);
+                        aFolNew = accelWith(vehs[tFollower], static_cast<long>(si), *seg);
+                        if(aFolNew < -m_mobil.bSafe) // MOBIL safety: don't force an emergency brake
+                            continue;
+                    }
+                    // Ego's current follower, before/after ego leaves its lane.
+                    float aOldFolBefore = 0.0f, aOldFolAfter = 0.0f;
+                    if(curFollower >= 0)
+                    {
+                        aOldFolBefore = accelWith(vehs[curFollower], static_cast<long>(si), *seg);
+                        aOldFolAfter = accelWith(vehs[curFollower], curLeader, *seg);
+                    }
+
+                    // Asymmetric (keep-right) MOBIL: move LEFT only to gain your OWN
+                    // speed (passing lane), and RIGHT out of courtesy + keep-right.
+                    // Applying the old-follower courtesy term to LEFT moves would make a
+                    // slow car perversely yield into the very lane the overtaker wants.
+                    float incentive = (aNew - aCur) + m_mobil.politeness * (aFolNew - aFolOld);
+                    if(dir < 0)
+                        incentive += m_mobil.politeness * (aOldFolAfter - aOldFolBefore) +
+                                     m_mobil.biasRight; // keep-right + courtesy yielding right
+                    else
+                        incentive -= m_mobil.biasRight; // discourage entering the passing lane
+
+                    if(incentive > bestIncentive)
+                    {
+                        bestIncentive = incentive;
+                        bestDir = dir;
+                    }
+                }
+
+                desiredLaneChange[si] = bestDir;
+                if(bestDir != 0)
+                {
+                    auto la = m_lastAction.find(self.id);
+                    if(la != m_lastAction.end())
+                        la->second.laneChange = static_cast<int8_t>(bestDir); // future-brain seam
+                }
+            }
+        }
+    }
+
     uint32_t Simulation::nextSegmentForLookahead(const Vehicle& v, const RoadSegment& seg) const
     {
         const Node* toNode = m_roadNetwork ? m_roadNetwork->getNode(seg.toNode) : nullptr;
@@ -330,13 +492,22 @@ namespace tfv
         return toNode->outgoing[0];
     }
 
-    glm::vec2 Simulation::segWorldPos(const RoadSegment& seg, float position) const
+    glm::vec2 Simulation::segWorldPos(const RoadSegment& seg, float position, uint8_t laneIndex) const
     {
         glm::vec2 base(0.0f, 0.0f);
         if(m_roadNetwork)
             if(const Node* n = m_roadNetwork->getNode(seg.fromNode))
                 base = n->pos;
-        return base + seg.dir * (position * seg.length); // lane offset is 0 in Phase 5 (centerline)
+        glm::vec2 p = base + seg.dir * (position * seg.length);
+        const int laneCount = std::max(1, seg.lanes);
+        if(laneCount > 1) // single-lane stays on the centerline (byte-identical to Phase 5)
+        {
+            const float off =
+                (static_cast<float>(laneIndex) - (laneCount - 1) * 0.5f) * m_laneWidth;
+            const glm::vec2 normal(-seg.dir.y, seg.dir.x); // matches RoadRenderer (SDL y-down)
+            p += normal * off;
+        }
+        return p;
     }
 
     const Sign* Simulation::nearestStopAhead(const Vehicle& v) const
@@ -404,7 +575,10 @@ namespace tfv
                     const std::size_t self = idxs[k];
                     for(std::size_t j = k + 1; j < idxs.size(); ++j)
                     {
-                        if(vehs[idxs[j]].position > vehs[self].position)
+                        // Lane-aware: a vehicle follows the next car ahead IN ITS OWN LANE.
+                        // Single-lane (all laneIndex 0) reduces to the original behaviour.
+                        if(vehs[idxs[j]].laneIndex == vehs[self].laneIndex &&
+                           vehs[idxs[j]].position > vehs[self].position)
                         {
                             leaderOf[self] = static_cast<long>(idxs[j]);
                             break;
@@ -486,6 +660,11 @@ namespace tfv
                     m_lastAction[vehs[deciders[k]].id] = out[k];
             }
 
+            // (2b) MOBIL lane-change evaluation (Phase A, read-only): choose a desired
+            //      lane change per vehicle on multi-lane segments (committed in Phase B0).
+            std::vector<int> desiredLaneChange(vehs.size(), 0);
+            evaluateLaneChanges(vehs, bySeg, leaderOf, desiredLaneChange);
+
             // (3) Integrate each vehicle's (fresh or held) action into intended motion.
             struct Step
             {
@@ -508,6 +687,55 @@ namespace tfv
                 const float vOld = glm::length(vehs[i].vel);
                 const float vNew = std::max(0.0f, vOld + accel * fdt);
                 steps[i] = Step{segment->dir * vNew, vNew, vNew * fdt, true};
+            }
+
+            // ----- Phase B0: commit lane changes (frame-N positions intact; ascending id) -----
+            if(m_mobil.enabled)
+            {
+                const uint64_t cooldownTicks =
+                    static_cast<uint64_t>(std::max(1.0, m_mobil.cooldownSec / dt));
+                for(std::size_t i = 0; i < vehs.size(); ++i)
+                {
+                    const int dir = desiredLaneChange[i];
+                    if(dir == 0)
+                        continue;
+                    Vehicle& v = vehs[i];
+                    const auto* seg = m_roadNetwork->getSegment(v.segmentId);
+                    if(!seg)
+                        continue;
+                    const int laneCount = std::max(1, seg->lanes);
+                    const int L = static_cast<int>(v.laneIndex) + dir;
+                    if(L < 0 || L >= laneCount)
+                        continue;
+                    // Re-check against CURRENT assignments (lower-id vehicles may have moved
+                    // into L this tick): require >= s0 clearance to every car in lane L, so
+                    // two vehicles can never claim the same gap. Lowest id wins.
+                    bool ok = true;
+                    for(std::size_t j = 0; j < vehs.size(); ++j)
+                    {
+                        if(j == i)
+                            continue;
+                        const Vehicle& o = vehs[j];
+                        if(o.segmentId != v.segmentId || static_cast<int>(o.laneIndex) != L)
+                            continue;
+                        const float gapM = std::fabs(o.position - v.position) * seg->length -
+                                           0.5f * (v.length + o.length);
+                        if(gapM < m_idm.s0)
+                        {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if(!ok)
+                        continue;
+                    v.prevLaneIndex = v.laneIndex;
+                    v.laneIndex = static_cast<uint8_t>(L);
+                    v.laneChangeTick = m_tick;
+                    m_laneChangeCooldown[v.id] = m_tick + cooldownTicks;
+                    auto la = m_lastAction.find(v.id);
+                    if(la != m_lastAction.end())
+                        la->second.laneChange = 0; // consumed
+                }
             }
 
             // ----- Phase B: act/commit (apply intents to produce frame N+1) -----
@@ -592,6 +820,9 @@ namespace tfv
                             // Lane-keeping: clamp lane index to the new segment's lane count.
                             v.laneIndex = static_cast<uint8_t>(
                                 std::min<int>(v.laneIndex, std::max(0, nextSeg->lanes - 1)));
+                            // Keep the render/observation lane state consistent across the
+                            // hand-off so a clamp can't assert a phantom turn signal.
+                            v.prevLaneIndex = v.laneIndex;
                             v.segmentId = nextSegmentId;
                             v.position -= 1.f;          // carry over the overshoot
                             m_signCleared.erase(v.id);  // re-evaluate signs on the new segment
@@ -615,12 +846,17 @@ namespace tfv
                 // (possibly newly handed-off) segment.
                 {
                     auto la = m_lastAction.find(v.id);
-                    v.lightBits =
+                    uint8_t bits =
                         (la != m_lastAction.end()) ? (la->second.lightCmd & light::BRAKE) : 0;
+                    // Turn signal during the lane-change render window.
+                    const uint64_t signalTicks = static_cast<uint64_t>(std::max(1.0, 0.8 / dt));
+                    if(v.prevLaneIndex != v.laneIndex && (m_tick - v.laneChangeTick) < signalTicks)
+                        bits |= (v.laneIndex < v.prevLaneIndex) ? light::LEFT : light::RIGHT;
+                    v.lightBits = bits;
                 }
                 if(auto* cur = m_roadNetwork->getSegment(v.segmentId))
                 {
-                    v.worldPos = segWorldPos(*cur, v.position);
+                    v.worldPos = segWorldPos(*cur, v.position, v.laneIndex);
                     v.heading = std::atan2(cur->dir.y, cur->dir.x);
                 }
             }
@@ -732,7 +968,7 @@ namespace tfv
                 // origin before the first Phase B (init does this for loaded vehicles).
                 if(Vehicle* stored = m_world.find(v.id))
                 {
-                    stored->worldPos = segWorldPos(*segment, stored->position);
+                    stored->worldPos = segWorldPos(*segment, stored->position, stored->laneIndex);
                     stored->heading = std::atan2(segment->dir.y, segment->dir.x);
                 }
             }
@@ -761,6 +997,7 @@ namespace tfv
         m_lastAction.erase(id);
         m_forceDecide.erase(id);
         m_signCleared.erase(id);
+        m_laneChangeCooldown.erase(id);
     }
 
     void Simulation::setSpeedLimit(uint32_t segmentId, float limit)

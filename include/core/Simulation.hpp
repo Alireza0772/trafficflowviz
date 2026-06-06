@@ -103,8 +103,17 @@ namespace tfv
         // Nearest STOP/YIELD sign ahead of the vehicle on its current segment (null if none).
         const Sign* nearestStopAhead(const Vehicle& v) const;
 
-        // World-space position of `position` (0..1) along a segment centerline.
-        glm::vec2 segWorldPos(const RoadSegment& seg, float position) const;
+        // World-space position of `position` (0..1) along a segment, offset to the lane.
+        // laneCount==1 -> zero lateral offset (centerline, byte-identical to Phase 5).
+        glm::vec2 segWorldPos(const RoadSegment& seg, float position, uint8_t laneIndex) const;
+
+        // MOBIL lane-change evaluator (Phase 6). Phase A, read-only over the frame:
+        // fills desiredLaneChange[i] in {-1,0,+1} for multi-lane segments and mirrors
+        // the decision + turn-signal bits into the held action. Commit is in Phase B.
+        void evaluateLaneChanges(const std::vector<Vehicle>& vehs,
+                                 const std::unordered_map<uint32_t, std::vector<std::size_t>>& bySeg,
+                                 const std::vector<long>& leaderOf,
+                                 std::vector<int>& desiredLaneChange);
 
         World m_world;
         RoadNetwork* m_roadNetwork{nullptr};
@@ -140,6 +149,20 @@ namespace tfv
         UniformGrid m_grid;
         PerceptionParams m_perceptionParams;
         bool m_crossSegmentLeader{true}; // S3 behavioral toggle (gates the digest change)
+
+        // MOBIL lane-change (Phase 6)
+        struct MobilParams
+        {
+            bool enabled{true};
+            float bSafe{4.0f};     // max induced follower decel (<= idm b_max)
+            float politeness{0.2f};
+            float threshold{0.2f}; // min incentive (m/s^2) to switch
+            float biasRight{0.1f}; // keep-right bias toward lower lane index
+            float cooldownSec{2.0f};
+        };
+        float m_laneWidth{3.5f};
+        MobilParams m_mobil;
+        std::unordered_map<uint64_t, uint64_t> m_laneChangeCooldown; // id -> tick until allowed
     };
 
 } // namespace tfv
