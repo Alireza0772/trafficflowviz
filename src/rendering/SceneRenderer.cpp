@@ -1,5 +1,6 @@
 #include "rendering/SceneRenderer.hpp"
 
+#include "agents/Action.hpp"
 #include <cmath>
 #include <glm/glm.hpp>
 #include <unordered_map>
@@ -193,39 +194,19 @@ namespace tfv
 
     void VehicleRenderer::draw(const VehicleMap& vehicles, const RoadNetwork* const net)
     {
-        if(!net || net->segments().empty())
-            return;
-        const auto& segs = net->segments();
-
-        // Segment ids are identifiers, not vector indices: build an id -> visual
-        // map so each vehicle draws on the correct segment even when ids are
-        // sparse or unordered.
-        std::unordered_map<uint32_t, const RoadVisual*> byId;
-        byId.reserve(segs.size());
-        for(const auto& rv : segs)
-            byId.emplace(rv.id, &rv);
-
-        for(const auto& [id, v] : vehicles)
+        (void)net; // positioning now comes from Vehicle.worldPos/heading (computed by Simulation)
+        for(const auto& entry : vehicles)
         {
-            auto segIt = byId.find(v.segmentId);
-            if(segIt == byId.end())
-                continue;
-            const auto& s = *segIt->second;
-            float x1 = static_cast<float>(s.x1), y1 = static_cast<float>(s.y1);
-            float x2 = static_cast<float>(s.x2), y2 = static_cast<float>(s.y2);
-            float dx = x2 - x1, dy = y2 - y1;
-            float len = std::sqrt(dx * dx + dy * dy);
-            if(len == 0)
-                continue;
-            float ux = dx / len, uy = dy / len;
-            float t = v.position; // position is now 0..1
-            float wx = x1 + ux * (len * t);
-            float wy = y1 + uy * (len * t);
-            int sx = static_cast<int>(wx * m_scale) + m_panX;
-            int sy = static_cast<int>(wy * m_scale) + m_panY;
+            const Vehicle& v = entry.second;
+            const float ux = std::cos(v.heading), uy = std::sin(v.heading);
+            int sx = static_cast<int>(v.worldPos.x * m_scale) + m_panX;
+            int sy = static_cast<int>(v.worldPos.y * m_scale) + m_panY;
 
-            // Vehicle color - different green shade than heatmap
-            m_r->setColor(50, 200, 50, 255);
+            // Brake light: tint red when braking; otherwise the usual green.
+            if(v.lightBits & light::BRAKE)
+                m_r->setColor(235, 70, 50, 255);
+            else
+                m_r->setColor(50, 200, 50, 255);
 
             if(m_scale < 2.0f)
             {

@@ -42,11 +42,25 @@ namespace tfv
         inline constexpr int SignalPhase = 8;         // light color ahead: green 0, amber .5, red 1 (Phase 4)
         inline constexpr int SignalTimeToChange = 9;  // reserved (refined later)
         inline constexpr int NearestSignType = 10;    // normalized sign-type code ahead (Phase 3)
-        // Front sector (idx 11-13 of the 4-sector block 11..22)
+        // Front sector (idx 11-13): the PATH-relative leader/sign/light front constraint.
         inline constexpr int FrontGap = 11;       // bumper gap (m) / OBS_RANGE_SCALE, clamped to 1
         inline constexpr int FrontRelSpeed = 12;  // (v_self - v_leader) / OBS_SPEED_SCALE
-        inline constexpr int FrontHasLeader = 13; // 1.0 if a same-segment leader exists, else 0
-    }                                             // namespace obs_idx
+        inline constexpr int FrontHasLeader = 13; // 1.0 if a front constraint exists, else 0
+        // World-space sector neighbours (Phase 5). Each sector = {relDist, relSpeed,
+        // lightBits}; lightBits is packed as one normalized float = (bits & 0x1F)/31.
+        inline constexpr int RearRelDist = 14;
+        inline constexpr int RearRelSpeed = 15;
+        inline constexpr int RearLightBits = 16;
+        inline constexpr int LeftRelDist = 17;
+        inline constexpr int LeftRelSpeed = 18;
+        inline constexpr int LeftLightBits = 19;
+        inline constexpr int RightRelDist = 20;
+        inline constexpr int RightRelSpeed = 21;
+        inline constexpr int RightLightBits = 22;
+        // idx 23 reserved.
+    } // namespace obs_idx
+
+    inline constexpr float OBS_TIME_SCALE = 10.0f; // seconds normalizer for time-to-change
 
 } // namespace tfv
 

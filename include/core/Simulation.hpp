@@ -14,6 +14,9 @@
 #include "core/RoadNetwork.hpp"
 #include "core/TrafficEntity.hpp"
 #include "core/World.hpp"
+#include "perception/PerceptionSystem.hpp"
+
+#include <array>
 
 namespace tfv
 {
@@ -84,12 +87,24 @@ namespace tfv
         // Check for alert conditions
         void checkAlerts();
 
-        // Build the normalized observation for a vehicle (leaderIdx < 0 = free road).
+        // Build the normalized observation for a vehicle. leaderIdx<0 = no same-segment
+        // leader; (crossGapNorm,crossRelSpeed,hasCross) is the cross-segment front
+        // override; sectors are the world-space F/R/L/R neighbours; dt is the tick.
         Observation buildObservation(const Vehicle& self, long leaderIdx,
-                                     const std::vector<Vehicle>& vehs) const;
+                                     const std::vector<Vehicle>& vehs,
+                                     const std::array<SensedNeighbor, 4>& sectors,
+                                     float crossGapNorm, float crossRelSpeed, bool hasCross,
+                                     double dt) const;
+
+        // Deterministic READ-ONLY next-segment predicate (mirrors the Phase-B hand-off
+        // without advancing routeIdx), for cross-segment leader lookahead.
+        uint32_t nextSegmentForLookahead(const Vehicle& v, const RoadSegment& seg) const;
 
         // Nearest STOP/YIELD sign ahead of the vehicle on its current segment (null if none).
         const Sign* nearestStopAhead(const Vehicle& v) const;
+
+        // World-space position of `position` (0..1) along a segment centerline.
+        glm::vec2 segWorldPos(const RoadSegment& seg, float position) const;
 
         World m_world;
         RoadNetwork* m_roadNetwork{nullptr};
@@ -120,6 +135,11 @@ namespace tfv
 
         // Central traffic-light controller (Phase 4)
         LightController m_lightController;
+
+        // Perception (Phase 5)
+        UniformGrid m_grid;
+        PerceptionParams m_perceptionParams;
+        bool m_crossSegmentLeader{true}; // S3 behavioral toggle (gates the digest change)
     };
 
 } // namespace tfv

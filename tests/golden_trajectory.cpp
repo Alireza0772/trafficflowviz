@@ -28,7 +28,7 @@
 using namespace tfv;
 
 // Committed reference digest (0 = not yet pinned; run with --print-hash to obtain).
-static constexpr uint64_t kGolden = 0x0848c7f62a07b56bULL;
+static constexpr uint64_t kGolden = 0xae287e07b4befaf0ULL;
 
 namespace
 {
@@ -174,6 +174,64 @@ namespace
     }
 } // namespace
 
+// Gate 8: cross-segment leader. A follower near the end of seg0 with a (near-)
+// stationary leader just past the node on its path (seg1) must brake; with NO such
+// leader it stays fast. Distinguishes cross-segment lookahead from same-segment-only.
+static bool crossSegmentGate()
+{
+    auto runFollower = [](bool withLeader) -> float {
+        RoadNetwork net;
+        auto addNode = [&](uint32_t id, float x, float y) {
+            Node n;
+            n.id = id;
+            n.pos = {x, y};
+            net.addNode(n);
+        };
+        addNode(1, 0, 0);
+        addNode(2, 100, 0);
+        addNode(3, 200, 0);
+        auto addSeg = [&](uint32_t id, uint32_t f, uint32_t t) {
+            RoadSegment s;
+            s.id = id;
+            s.fromNode = f;
+            s.toNode = t;
+            s.dir = {1, 0};
+            s.length = 100.0f;
+            s.speedLimit = 13.9f;
+            net.addSegment(s);
+        };
+        addSeg(0, 1, 2);
+        addSeg(1, 2, 3);
+
+        std::vector<Vehicle> v;
+        Vehicle follower;
+        follower.id = 1;
+        follower.segmentId = 0;
+        follower.position = 0.90f;
+        follower.vel = {12.0f, 0.0f};
+        v.push_back(follower);
+        if(withLeader)
+        {
+            Vehicle lead;
+            lead.id = 2;
+            lead.segmentId = 1; // just past the node on the follower's path
+            lead.position = 0.05f;
+            lead.vel = {0.0f, 0.0f};
+            v.push_back(lead);
+        }
+        Simulation sim(&net);
+        sim.initialize(std::move(v));
+        for(int t = 0; t < 30; ++t)
+            sim.update(0.02);
+        return glm::length(sim.snapshot().at(1).vel);
+    };
+
+    const float withLead = runFollower(true);
+    const float noLead = runFollower(false);
+    std::printf("cross-seg gate: follower speed with leader=%.3f, free=%.3f\n", withLead, noLead);
+    return withLead < noLead - 2.0f; // braked for the car just past the node
+}
+
 int main(int argc, char** argv)
 {
     bool printOnly = (argc > 1 && std::strcmp(argv[1], "--print-hash") == 0);
@@ -258,8 +316,13 @@ int main(int argc, char** argv)
         std::printf("FAIL: vehicle 4 never proceeded through the light (green never released)\n");
         ++failures;
     }
+    if(!crossSegmentGate())
+    {
+        std::printf("FAIL: cross-segment leader did not make the follower brake\n");
+        ++failures;
+    }
 
     if(failures == 0)
-        std::printf("PASS: golden_trajectory (7 gates)\n");
+        std::printf("PASS: golden_trajectory (8 gates)\n");
     return failures == 0 ? 0 : 1;
 }

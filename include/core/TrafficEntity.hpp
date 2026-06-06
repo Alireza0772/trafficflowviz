@@ -77,6 +77,9 @@ namespace tfv
         float position{0.0f};    // Normalized position along segment (0-1)
         glm::vec2 vel{0.0f, 0.0f}; // Velocity vector
         glm::vec2 acc{0.0f, 0.0f}; // Acceleration vector (glm does not zero-init by default)
+        glm::vec2 worldPos{0.0f, 0.0f}; // Authoritative world position (computed by Simulation)
+        float heading{0.0f};            // Heading (radians) = atan2(segment.dir.y, .x)
+        uint8_t lightBits{0};           // Observable lights (light:: flags); set from the action
         float length{4.5f};      // Vehicle length in meters
         float width{1.8f};       // Vehicle width in meters
         std::string type{"car"}; // Vehicle type (car, truck, etc.)

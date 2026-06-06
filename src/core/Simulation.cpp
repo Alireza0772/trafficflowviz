@@ -103,6 +103,39 @@ namespace tfv
         m_lightController = LightController(lt);
         m_lightController.reset(*m_roadNetwork);
 
+        // Perception (Phase 5): params + spatial-grid bounds from the network bbox.
+        m_perceptionParams.rangeFront = cfg.getFloat("perception.range_front_m", 60.0f);
+        m_perceptionParams.rangeRear = cfg.getFloat("perception.range_rear_m", 30.0f);
+        m_perceptionParams.rangeSide = cfg.getFloat("perception.range_side_m", 15.0f);
+        m_perceptionParams.sectorFrontDeg = cfg.getFloat("perception.sector_front_deg", 45.0f);
+        m_perceptionParams.sectorRearDeg = cfg.getFloat("perception.sector_rear_deg", 45.0f);
+        m_crossSegmentLeader = cfg.getInt("perception.cross_segment_leader", 1) != 0;
+        {
+            glm::vec2 mn(1e30f, 1e30f), mx(-1e30f, -1e30f);
+            for(uint32_t sid : m_roadNetwork->getSegmentIds())
+                if(const auto* s = m_roadNetwork->getSegment(sid))
+                {
+                    if(const Node* a = m_roadNetwork->getNode(s->fromNode))
+                    {
+                        mn = glm::min(mn, a->pos);
+                        mx = glm::max(mx, a->pos);
+                    }
+                    if(const Node* b = m_roadNetwork->getNode(s->toNode))
+                    {
+                        mn = glm::min(mn, b->pos);
+                        mx = glm::max(mx, b->pos);
+                    }
+                }
+            if(mn.x > mx.x) // empty/degenerate network guard
+            {
+                mn = glm::vec2(0.0f, 0.0f);
+                mx = glm::vec2(1.0f, 1.0f);
+            }
+            const float cell = std::max({m_perceptionParams.rangeFront,
+                                         m_perceptionParams.rangeRear, m_perceptionParams.rangeSide});
+            m_grid.setBounds(mn - glm::vec2(cell, cell), mx + glm::vec2(cell, cell), cell);
+        }
+
         // Store vehicles (sorted by id), align velocity to lane direction (avoids a
         // first-tick heading pop), and initialize per-segment occupancy.
         m_world.load(std::move(vehicles));
@@ -113,6 +146,8 @@ namespace tfv
                 continue;
             float sp = glm::length(v.vel);
             v.vel = segment->dir * sp;
+            v.worldPos = segWorldPos(*segment, v.position);
+            v.heading = std::atan2(segment->dir.y, segment->dir.x);
             segment->vehicleCount++;
             updateCongestion(v.segmentId);
 
@@ -131,7 +166,10 @@ namespace tfv
     }
 
     Observation Simulation::buildObservation(const Vehicle& self, long leaderIdx,
-                                             const std::vector<Vehicle>& vehs) const
+                                             const std::vector<Vehicle>& vehs,
+                                             const std::array<SensedNeighbor, 4>& sectors,
+                                             float crossGapNorm, float crossRelSpeed, bool hasCross,
+                                             double dt) const
     {
         Observation o{}; // zero-initialized; only longitudinal channels are filled
         const auto* seg = m_roadNetwork ? m_roadNetwork->getSegment(self.segmentId) : nullptr;
@@ -188,6 +226,14 @@ namespace tfv
             frontRelSpeed = (vSelf - glm::length(lead.vel)) / OBS_SPEED_SCALE;
             hasFront = true;
         }
+        else if(hasCross && seg)
+        {
+            // No same-segment leader, but a car sits just past the node on our path
+            // (cross-segment lookahead). Path-relative, never a world-space cone car.
+            frontGapNorm = crossGapNorm;
+            frontRelSpeed = crossRelSpeed;
+            hasFront = true;
+        }
         if(stopSign && seg)
         {
             auto cl = m_signCleared.find(self.id);
@@ -231,7 +277,66 @@ namespace tfv
         o[obs_idx::FrontRelSpeed] = frontRelSpeed;
         o[obs_idx::FrontHasLeader] = hasFront ? 1.0f : 0.0f;
 
+        // Signal time-to-change (idx 9): seconds remaining in the current light phase.
+        if(seg && m_roadNetwork)
+        {
+            const auto& xs = m_roadNetwork->intersections();
+            auto xit = xs.find(seg->toNode);
+            if(xit != xs.end())
+            {
+                const auto& X = xit->second;
+                const auto& t = m_lightController.timing();
+                const float colorSec = (X.activeColor == LightColor::Green)  ? t.greenSec
+                                       : (X.activeColor == LightColor::Amber) ? t.amberSec
+                                                                              : t.allRedSec;
+                // Quantize the phase length the SAME way LightController does, so the
+                // reported time-to-change matches the exact tick at which it flips.
+                const long colorTicks = std::max(1L, std::lround(colorSec / dt));
+                float remaining =
+                    static_cast<float>((colorTicks - static_cast<long>(X.ticksInPhase)) * dt);
+                if(remaining < 0.0f)
+                    remaining = 0.0f;
+                o[obs_idx::SignalTimeToChange] = std::min(remaining / OBS_TIME_SCALE, 1.0f);
+            }
+        }
+
+        // World-space sector neighbours (idx 14-22): rear / left / right.
+        auto fillSector = [&](int base, const SensedNeighbor& n) {
+            if(!n.valid)
+                return;
+            o[base + 0] = std::min(n.relDist / OBS_RANGE_SCALE, 1.0f);
+            o[base + 1] = std::clamp(n.relSpeed / OBS_SPEED_SCALE, -1.0f, 1.0f);
+            o[base + 2] = static_cast<float>(n.lightBits & 0x1F) / 31.0f;
+        };
+        fillSector(obs_idx::RearRelDist, sectors[static_cast<int>(Sector::Rear)]);
+        fillSector(obs_idx::LeftRelDist, sectors[static_cast<int>(Sector::Left)]);
+        fillSector(obs_idx::RightRelDist, sectors[static_cast<int>(Sector::Right)]);
+
         return o;
+    }
+
+    uint32_t Simulation::nextSegmentForLookahead(const Vehicle& v, const RoadSegment& seg) const
+    {
+        const Node* toNode = m_roadNetwork ? m_roadNetwork->getNode(seg.toNode) : nullptr;
+        if(!toNode || toNode->outgoing.empty())
+            return UINT32_MAX;
+        if(v.routeIdx < v.route.size())
+        {
+            const uint32_t want = v.route[v.routeIdx];
+            if(std::find(toNode->outgoing.begin(), toNode->outgoing.end(), want) !=
+               toNode->outgoing.end())
+                return want;
+        }
+        return toNode->outgoing[0];
+    }
+
+    glm::vec2 Simulation::segWorldPos(const RoadSegment& seg, float position) const
+    {
+        glm::vec2 base(0.0f, 0.0f);
+        if(m_roadNetwork)
+            if(const Node* n = m_roadNetwork->getNode(seg.fromNode))
+                base = n->pos;
+        return base + seg.dir * (position * seg.length); // lane offset is 0 in Phase 5 (centerline)
     }
 
     const Sign* Simulation::nearestStopAhead(const Vehicle& v) const
@@ -308,6 +413,48 @@ namespace tfv
                 }
             }
 
+            // (1b) Perception substrate: rebuild the spatial grid from frozen frame-N
+            //      world positions, and compute the cross-segment leader override (the
+            //      car just past the node on this vehicle's path) for vehicles with no
+            //      same-segment leader. bySeg buckets are (position asc, id asc) sorted,
+            //      so front() is the nearest car to the downstream node.
+            m_grid.rebuild(vehs);
+            std::vector<float> crossGap(vehs.size(), 1.0f);
+            std::vector<float> crossRel(vehs.size(), 0.0f);
+            std::vector<char> hasCross(vehs.size(), 0);
+            if(m_crossSegmentLeader)
+            {
+                for(std::size_t i = 0; i < vehs.size(); ++i)
+                {
+                    if(leaderOf[i] >= 0)
+                        continue;
+                    const Vehicle& v = vehs[i];
+                    const auto* seg = m_roadNetwork->getSegment(v.segmentId);
+                    if(!seg)
+                        continue;
+                    const float remM = (1.0f - v.position) * seg->length;
+                    if(remM > m_perceptionParams.rangeFront)
+                        continue; // not near the node yet
+                    const uint32_t nextId = nextSegmentForLookahead(v, *seg);
+                    if(nextId == UINT32_MAX)
+                        continue;
+                    const auto* nextSeg = m_roadNetwork->getSegment(nextId);
+                    if(!nextSeg)
+                        continue;
+                    auto bit = bySeg.find(nextId);
+                    if(bit == bySeg.end() || bit->second.empty())
+                        continue;
+                    const Vehicle& lead = vehs[bit->second.front()]; // smallest position downstream
+                    float gapM =
+                        remM + lead.position * nextSeg->length - 0.5f * (v.length + lead.length);
+                    if(gapM < 0.1f)
+                        gapM = 0.1f;
+                    crossGap[i] = std::min(gapM / OBS_RANGE_SCALE, 1.0f);
+                    crossRel[i] = (glm::length(v.vel) - glm::length(lead.vel)) / OBS_SPEED_SCALE;
+                    hasCross[i] = 1;
+                }
+            }
+
             // (2) Decide actions (batched) for vehicles due this tick; reuse the held
             //     action otherwise. New or just-handed-off vehicles always decide.
             std::vector<std::size_t> deciders;
@@ -324,7 +471,13 @@ namespace tfv
             {
                 std::vector<Observation> obs(deciders.size());
                 for(std::size_t k = 0; k < deciders.size(); ++k)
-                    obs[k] = buildObservation(vehs[deciders[k]], leaderOf[deciders[k]], vehs);
+                {
+                    const std::size_t i = deciders[k];
+                    const std::array<SensedNeighbor, 4> sectors =
+                        sense(i, vehs, m_grid, m_perceptionParams);
+                    obs[k] = buildObservation(vehs[i], leaderOf[i], vehs, sectors, crossGap[i],
+                                              crossRel[i], hasCross[i] != 0, dt);
+                }
 
                 std::vector<Action> out(deciders.size());
                 m_brain->decideBatch(obs.data(), static_cast<int>(deciders.size()), out.data());
@@ -456,6 +609,20 @@ namespace tfv
                 }
 
                 segment->currentSpeed = steps[i].speed;
+
+                // Observable state for perception/rendering: light bits (only BRAKE is
+                // emitted in Phase 5) and the authoritative world pose on the CURRENT
+                // (possibly newly handed-off) segment.
+                {
+                    auto la = m_lastAction.find(v.id);
+                    v.lightBits =
+                        (la != m_lastAction.end()) ? (la->second.lightCmd & light::BRAKE) : 0;
+                }
+                if(auto* cur = m_roadNetwork->getSegment(v.segmentId))
+                {
+                    v.worldPos = segWorldPos(*cur, v.position);
+                    v.heading = std::atan2(cur->dir.y, cur->dir.x);
+                }
             }
 
             ++m_tick;
@@ -561,6 +728,13 @@ namespace tfv
             {
                 segment->vehicleCount++;
                 updateCongestion(v.segmentId);
+                // Seed world pose so a runtime-added vehicle never renders at the
+                // origin before the first Phase B (init does this for loaded vehicles).
+                if(Vehicle* stored = m_world.find(v.id))
+                {
+                    stored->worldPos = segWorldPos(*segment, stored->position);
+                    stored->heading = std::atan2(segment->dir.y, segment->dir.x);
+                }
             }
         }
     }

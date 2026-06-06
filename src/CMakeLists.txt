@@ -13,6 +13,10 @@ set(TRAFFICFLOWVIZ_SOURCES
     # Control
     control/LightController.cpp
 
+    # Perception (Phase 5)
+    perception/SpatialIndex.cpp
+    perception/PerceptionSystem.cpp
+
     # Rendering component sources
     rendering/Renderer.cpp
     rendering/SceneRenderer.cpp
