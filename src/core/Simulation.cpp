@@ -149,6 +149,10 @@ namespace tfv
             m_mobil.bSafe = m_idm.b_max;
         m_laneChangeCooldown.clear();
 
+        // Action validator (Phase 7): clamps/scrubs brain output; default on.
+        m_validator.setEnabled(cfg.getInt("validator.enabled", 1) != 0);
+        m_violations.clear();
+
         // Store vehicles (sorted by id), align velocity to lane direction (avoids a
         // first-tick heading pop), and initialize per-segment occupancy.
         m_world.load(std::move(vehicles));
@@ -658,12 +662,38 @@ namespace tfv
 
                 for(std::size_t k = 0; k < deciders.size(); ++k)
                     m_lastAction[vehs[deciders[k]].id] = out[k];
+
+                // (2a) Validate each freshly produced action (clamp/scrub; tally per-agent
+                //      violations). A byte-identical no-op on the rule brain's output.
+                for(std::size_t k = 0; k < deciders.size(); ++k)
+                {
+                    const std::size_t i = deciders[k];
+                    const auto* seg = m_roadNetwork->getSegment(vehs[i].segmentId);
+                    const int laneCount = seg ? std::max(1, seg->lanes) : 1;
+                    const uint32_t nv = m_validator.validate(m_lastAction[vehs[i].id], laneCount,
+                                                             vehs[i].laneIndex, m_idm);
+                    if(nv)
+                        m_violations[vehs[i].id] += nv;
+                }
             }
 
-            // (2b) MOBIL lane-change evaluation (Phase A, read-only): choose a desired
-            //      lane change per vehicle on multi-lane segments (committed in Phase B0).
+            // (2b) Source the desired lane change: a brain that drives lane changes
+            //      provides its (validated) Action.laneChange; otherwise the built-in
+            //      MOBIL evaluator decides. Phase B0 is the single conflict-free committer.
             std::vector<int> desiredLaneChange(vehs.size(), 0);
-            evaluateLaneChanges(vehs, bySeg, leaderOf, desiredLaneChange);
+            if(m_brain->drivesLaneChange())
+            {
+                for(std::size_t i = 0; i < vehs.size(); ++i)
+                {
+                    auto la = m_lastAction.find(vehs[i].id);
+                    if(la != m_lastAction.end())
+                        desiredLaneChange[i] = la->second.laneChange;
+                }
+            }
+            else
+            {
+                evaluateLaneChanges(vehs, bySeg, leaderOf, desiredLaneChange);
+            }
 
             // (3) Integrate each vehicle's (fresh or held) action into intended motion.
             struct Step
@@ -685,12 +715,24 @@ namespace tfv
                 const Action& a = m_lastAction.at(vehs[i].id);
                 const float accel = std::clamp(a.accel, -m_idm.b_max, m_idm.a_max);
                 const float vOld = glm::length(vehs[i].vel);
-                const float vNew = std::max(0.0f, vOld + accel * fdt);
+                float vNew = std::max(0.0f, vOld + accel * fdt);
+                // Physical speed governor (independent of the brain): never exceed the
+                // effective desired speed. Identity on the IDM rule brain (which already
+                // self-limits below v0), so it cannot move the rule digests; it makes the
+                // NN safety bound a guarantee rather than a seed coincidence.
+                float vCap = std::min(segment->speedLimit, m_idm.v0_cap);
+                if(vehs[i].maxSpeed > 0.0f)
+                    vCap = std::min(vCap, vehs[i].maxSpeed);
+                if(vNew > vCap)
+                    vNew = vCap;
                 steps[i] = Step{segment->dir * vNew, vNew, vNew * fdt, true};
             }
 
             // ----- Phase B0: commit lane changes (frame-N positions intact; ascending id) -----
-            if(m_mobil.enabled)
+            // Run whenever lane changes are possible: MOBIL (rule path) OR a brain that
+            // drives its own lane changes — so a brain's lateral channel isn't silently
+            // disabled by the rule-path MOBIL toggle. A no-op when desiredLaneChange is all 0.
+            if(m_mobil.enabled || m_brain->drivesLaneChange())
             {
                 const uint64_t cooldownTicks =
                     static_cast<uint64_t>(std::max(1.0, m_mobil.cooldownSec / dt));
@@ -924,6 +966,25 @@ namespace tfv
         return m_world.size();
     }
 
+    uint32_t Simulation::violationCount(uint64_t id) const
+    {
+        std::scoped_lock lock(m_mtx);
+        auto it = m_violations.find(id);
+        return (it != m_violations.end()) ? it->second : 0u;
+    }
+
+    uint64_t Simulation::totalViolations() const
+    {
+        std::scoped_lock lock(m_mtx);
+        uint64_t sum = 0;
+        for(const auto& [id, v] : m_violations)
+        {
+            (void)id;
+            sum += v;
+        }
+        return sum;
+    }
+
     SegmentStatsMap Simulation::getSegmentStats() const
     {
         std::scoped_lock lock(m_mtx);
@@ -998,6 +1059,7 @@ namespace tfv
         m_forceDecide.erase(id);
         m_signCleared.erase(id);
         m_laneChangeCooldown.erase(id);
+        m_violations.erase(id);
     }
 
     void Simulation::setSpeedLimit(uint32_t segmentId, float limit)

@@ -9,6 +9,9 @@ set(TRAFFICFLOWVIZ_SOURCES
     # Agent decision layer
     agents/RuleBasedBrain.cpp
     agents/BrainRegistry.cpp
+    agents/ActionValidator.cpp
+    agents/VtableBrain.cpp
+    agents/NNBrain.cpp
 
     # Control
     control/LightController.cpp

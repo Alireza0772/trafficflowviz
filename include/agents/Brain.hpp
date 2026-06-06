@@ -39,6 +39,10 @@ namespace tfv
         /** Short kind name, e.g. "rule". */
         virtual const char* kindName() const = 0;
 
+        /** True if this brain emits its own Action.laneChange (so the Simulation honors
+         *  it instead of the built-in MOBIL evaluator). Default false (rule brain). */
+        virtual bool drivesLaneChange() const { return false; }
+
         /** Convenience single-agent decide (for tests/oracles). */
         Action decide(const Observation& obs)
         {

@@ -13,6 +13,8 @@
 //                              a vehicle actually stops at the STOP sign.
 
 #include "agents/Action.hpp"
+#include "agents/IdmParams.hpp"
+#include "agents/NNBrain.hpp"
 #include "core/Configuration.hpp"
 #include "core/RoadNetwork.hpp"
 #include "core/Simulation.hpp"
@@ -24,6 +26,7 @@
 #include <cstdio>
 #include <cstring>
 #include <glm/glm.hpp>
+#include <memory>
 #include <vector>
 
 using namespace tfv;
@@ -31,6 +34,7 @@ using namespace tfv;
 // Committed reference digest (0 = not yet pinned; run with --print-hash to obtain).
 static constexpr uint64_t kGolden = 0x9cb6732614cb624cULL; // hashes laneIndex (Phase 6)
 static constexpr uint64_t kGoldenMultiLane = 0x9a695a4adfbfd3e7ULL; // Gate 9 overtake
+static constexpr uint64_t kGoldenNN = 0xf164396f8160724dULL;        // Gate 10 NN determinism
 
 namespace
 {
@@ -329,6 +333,111 @@ static MultiLaneResult multiLaneRun()
     return r;
 }
 
+// Gate 10: the built-in neural-net brain. A random/untrained net drives erratically
+// but must stay (a) deterministic same-build (run-twice identical), (b) bounded +
+// finite (every accel passes the validator clamp), and (c) collision-free in a lane
+// (every lane change passes the Phase-B0 gap re-check). The net is injected directly
+// with a fixed architecture + seed, independent of Configuration, so the rule gates
+// are untouched.
+struct NNResult
+{
+    uint64_t digest{0};
+    bool finite{true};
+    bool bounded{true};
+    bool overlap{false};
+    float maxSpeed{0.0f};
+};
+static NNResult nnRun()
+{
+    RoadNetwork net;
+    Node n1, n2;
+    n1.id = 1;
+    n1.pos = {0, 0};
+    n2.id = 2;
+    n2.pos = {2000, 0};
+    net.addNode(n1);
+    net.addNode(n2);
+    RoadSegment s;
+    s.id = 0;
+    s.fromNode = 1;
+    s.toNode = 2;
+    s.dir = {1, 0};
+    s.length = 2000.0f;
+    s.speedLimit = 13.9f;
+    s.lanes = 2;
+    net.addSegment(s);
+
+    std::vector<Vehicle> v(4);
+    for(int i = 0; i < 4; ++i)
+    {
+        v[i].id = static_cast<uint64_t>(i + 1);
+        v[i].segmentId = 0;
+        v[i].position = 0.10f + 0.06f * i;
+        v[i].laneIndex = static_cast<uint8_t>(i % 2);
+        v[i].vel = {6.0f, 0.0f};
+    }
+    Simulation sim(&net);
+    sim.initialize(std::move(v));
+    IdmParams idm;
+    sim.setBrainForTest(
+        std::make_unique<NNBrain>(std::vector<int>{24, 8, 4}, "tanh", 12345ULL, idm, 0.5f));
+
+    NNResult r;
+    VehicleMap snap;
+    const double dt = 0.02;
+    for(int t = 0; t < 600; ++t)
+    {
+        sim.update(dt);
+        snap = sim.snapshot();
+        std::vector<const Vehicle*> vs;
+        for(const auto& [id, vv] : snap)
+        {
+            (void)id;
+            const float sp = glm::length(vv.vel);
+            if(!std::isfinite(sp) || !std::isfinite(vv.position))
+                r.finite = false;
+            if(sp < -0.01f || sp > idm.v0_cap + 1.0f)
+                r.bounded = false;
+            r.maxSpeed = std::max(r.maxSpeed, sp);
+            vs.push_back(&vv);
+        }
+        for(std::size_t a = 0; a < vs.size(); ++a)
+            for(std::size_t b = a + 1; b < vs.size(); ++b)
+                if(vs[a]->segmentId == vs[b]->segmentId && vs[a]->laneIndex == vs[b]->laneIndex)
+                {
+                    const float gap = std::fabs(vs[a]->position - vs[b]->position) * 2000.0f -
+                                      0.5f * (vs[a]->length + vs[b]->length);
+                    if(gap < 2.0f)
+                        r.overlap = true;
+                }
+    }
+
+    std::vector<uint64_t> ids;
+    for(const auto& [id, vv] : snap)
+    {
+        (void)vv;
+        ids.push_back(id);
+    }
+    std::sort(ids.begin(), ids.end());
+    uint64_t h = 1469598103934665603ULL;
+    auto mix = [&](uint64_t x) {
+        h ^= x;
+        h *= 1099511628211ULL;
+    };
+    for(uint64_t id : ids)
+    {
+        const Vehicle& vv = snap.at(id);
+        const float sp = glm::length(vv.vel);
+        mix(id);
+        mix(vv.segmentId);
+        mix(static_cast<uint64_t>(vv.laneIndex));
+        mix(static_cast<uint64_t>(static_cast<int64_t>(std::llround(vv.position * 1e6))));
+        mix(static_cast<uint64_t>(static_cast<int64_t>(std::llround(sp * 1e3))));
+    }
+    r.digest = h;
+    return r;
+}
+
 int main(int argc, char** argv)
 {
     bool printOnly = (argc > 1 && std::strcmp(argv[1], "--print-hash") == 0);
@@ -365,6 +474,11 @@ int main(int argc, char** argv)
     std::printf("multilane digest = 0x%016llx (laneChange=%d overtook=%d signal=%d overlap=%d)\n",
                 (unsigned long long)ml.digest, ml.sawLaneChange ? 1 : 0, ml.overtook ? 1 : 0,
                 ml.sawSignal ? 1 : 0, ml.overlap ? 1 : 0);
+
+    NNResult nn = nnRun();
+    std::printf("nn digest = 0x%016llx (finite=%d bounded=%d overlap=%d maxSpeed=%.3f)\n",
+                (unsigned long long)nn.digest, nn.finite ? 1 : 0, nn.bounded ? 1 : 0,
+                nn.overlap ? 1 : 0, nn.maxSpeed);
 
     if(printOnly)
         return 0;
@@ -462,8 +576,37 @@ int main(int argc, char** argv)
             ++failures;
         }
     }
+    {
+        NNResult nn2 = nnRun();
+        if(nn.digest != nn2.digest)
+        {
+            std::printf("FAIL: nn brain non-deterministic\n");
+            ++failures;
+        }
+        if(kGoldenNN != 0ULL && nn.digest != kGoldenNN)
+        {
+            std::printf("FAIL: nn digest 0x%016llx != golden 0x%016llx\n",
+                        (unsigned long long)nn.digest, (unsigned long long)kGoldenNN);
+            ++failures;
+        }
+        if(!nn.finite)
+        {
+            std::printf("FAIL: nn brain produced non-finite state\n");
+            ++failures;
+        }
+        if(!nn.bounded)
+        {
+            std::printf("FAIL: nn brain speed exceeded bounds (validator/integrator)\n");
+            ++failures;
+        }
+        if(nn.overlap)
+        {
+            std::printf("FAIL: nn brain caused a same-lane overlap (Phase-B0 gap re-check)\n");
+            ++failures;
+        }
+    }
 
     if(failures == 0)
-        std::printf("PASS: golden_trajectory (9 gates)\n");
+        std::printf("PASS: golden_trajectory (10 gates)\n");
     return failures == 0 ? 0 : 1;
 }

@@ -8,6 +8,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "agents/ActionValidator.hpp"
 #include "agents/Brain.hpp"
 #include "agents/IdmParams.hpp"
 #include "control/LightController.hpp"
@@ -76,6 +77,13 @@ namespace tfv
 
         // Get road network
         const RoadNetwork* getRoadNetwork() const { return m_roadNetwork; }
+
+        // Brain-action violations attributed by the ActionValidator (Phase 7).
+        uint32_t violationCount(uint64_t id) const;
+        uint64_t totalViolations() const;
+
+        // Test-only: swap the decision brain after initialize() (does not reset it).
+        void setBrainForTest(std::unique_ptr<IBrain> brain) { m_brain = std::move(brain); }
 
       private:
         // attach inputs to the simulation
@@ -163,6 +171,10 @@ namespace tfv
         float m_laneWidth{3.5f};
         MobilParams m_mobil;
         std::unordered_map<uint64_t, uint64_t> m_laneChangeCooldown; // id -> tick until allowed
+
+        // Brain backends (Phase 7)
+        ActionValidator m_validator;
+        std::unordered_map<uint64_t, uint32_t> m_violations; // id -> cumulative action violations
     };
 
 } // namespace tfv
