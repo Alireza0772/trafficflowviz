@@ -113,6 +113,17 @@ namespace tfv
         // Simulation / reproducibility
         m_values["sim.master_seed"] = "12345";
 
+        // Agent decision layer (Phase 2)
+        m_values["sim.default_brain"] = "rule";
+        m_values["perf.decision_hz"] = "10.0";
+        m_values["sim.idm.v0_cap"] = "13.9";
+        m_values["sim.idm.a_max"] = "1.5";
+        m_values["sim.idm.b_comfort"] = "2.0";
+        m_values["sim.idm.b_max"] = "6.0";
+        m_values["sim.idm.s0"] = "2.0";
+        m_values["sim.idm.T"] = "1.5";
+        m_values["sim.idm.delta"] = "4.0";
+
         // File paths (relative to executable or working directory)
         m_values["paths.data_dir"] = "data";
         m_values["paths.assets_dir"] = "assets";
@@ -401,6 +412,22 @@ namespace tfv
     int Configuration::getWorkerThreads() const
     {
         return getIntValue("perf.worker_threads", std::thread::hardware_concurrency());
+    }
+
+    float Configuration::getFloat(const std::string& key, float defaultValue) const
+    {
+        return getFloatValue(key, defaultValue);
+    }
+
+    int Configuration::getInt(const std::string& key, int defaultValue) const
+    {
+        return getIntValue(key, defaultValue);
+    }
+
+    std::string Configuration::getString(const std::string& key,
+                                         const std::string& defaultValue) const
+    {
+        return getValue(key, defaultValue);
     }
 
     uint64_t Configuration::getMasterSeed() const

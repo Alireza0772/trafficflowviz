@@ -56,7 +56,9 @@ namespace tfv
         ImGui_ImplSDLRenderer2_Init(m_renderer);
 
         m_initialized = true;
-        m_showKeybindings = true; // Show keybindings by default
+        // Keybindings visibility is controlled by the Engine (showKeybindingsWindow,
+        // toggled with 'K'); do not force it on here so the scene is unobstructed
+        // on first run.
     }
 
     void ImGuiLayer::onDetach()

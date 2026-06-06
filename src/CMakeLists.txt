@@ -6,6 +6,10 @@ set(TRAFFICFLOWVIZ_SOURCES
     core/World.cpp
     core/RoadNetwork.cpp
 
+    # Agent decision layer
+    agents/RuleBasedBrain.cpp
+    agents/BrainRegistry.cpp
+
     # Rendering component sources
     rendering/Renderer.cpp
     rendering/SceneRenderer.cpp
@@ -37,10 +41,10 @@ set(TRAFFICFLOWVIZ_SOURCES
 
     # Recording
     recording/RecordingManager.cpp
-
-    # Main application
-    main.cpp
 )
+# NOTE: main.cpp is intentionally NOT in the library — it is compiled directly
+# into the trafficviz executable below. Keeping main() out of the static lib lets
+# test executables link the lib without a duplicate-main symbol clash.
 
 # ImGui sources
 set(IMGUI_SOURCES

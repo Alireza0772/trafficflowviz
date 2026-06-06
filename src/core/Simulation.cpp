@@ -1,7 +1,9 @@
 #include "core/Simulation.hpp"
+#include "agents/BrainRegistry.hpp"
 #include "core/Configuration.hpp"
 #include "utils/LoggingManager.hpp"
 #include <algorithm>
+#include <cmath>
 #include <data/CSVLoader.hpp>
 #include <glm/glm.hpp>
 #include <iostream>
@@ -22,19 +24,7 @@ namespace tfv
     bool Simulation::initialize(const std::filesystem::path& cityInformationPath,
                                 const std::filesystem::path& vehicleInformationPath)
     {
-        std::scoped_lock lock(m_mtx);
-
-        // Seed the deterministic RNG stream from the configured master seed so
-        // routing choices are reproducible for a given seed (statistical tier).
-        m_rng.seed(static_cast<std::mt19937::result_type>(TFV_CONFIG().getMasterSeed()));
-
-        // Clear previous data
-        m_world.clear();
-        m_segmentStats.clear();
-        m_speedLimits.clear();
-        m_timeSinceLastUpdate = 0.0;
-
-        // Load road network
+        // Load road network (CSV) if one was not supplied via the constructor.
         if(!m_roadNetwork)
         {
             m_roadNetwork = new RoadNetwork();
@@ -45,7 +35,7 @@ namespace tfv
                 return false;
             }
         }
-        // Load vehicle information
+
         auto vehicles = tfv::loadVehiclesCSV(vehicleInformationPath);
         if(vehicles.empty())
         {
@@ -54,29 +44,102 @@ namespace tfv
             return false;
         }
 
-        // Store vehicles in the World (contiguous, sorted by id for determinism).
-        m_world.load(std::move(vehicles));
+        return initialize(std::move(vehicles));
+    }
 
-        // Initialize per-segment occupancy from the loaded vehicles.
-        for(const auto& v : m_world.vehicles())
+    bool Simulation::initialize(std::vector<Vehicle> vehicles)
+    {
+        std::scoped_lock lock(m_mtx);
+
+        if(!m_roadNetwork)
         {
-            if(m_roadNetwork)
-            {
-                auto* segment = m_roadNetwork->getSegment(v.segmentId);
-                if(segment)
-                {
-                    segment->vehicleCount++;
-                    updateCongestion(v.segmentId);
-
-                    LOG_INFO("Segment {segmentId} now has {count} vehicles",
-                             PARAM(segmentId, v.segmentId), PARAM(count, segment->vehicleCount));
-                }
-            }
+            LOG_ERROR("Simulation::initialize requires a road network");
+            return false;
         }
 
-        LOG_INFO("Initialized {count} vehicles in the simulation.", PARAM(count, m_world.size()));
+        // Seed the deterministic RNG stream from the configured master seed so
+        // routing choices are reproducible for a given seed (statistical tier).
+        m_rng.seed(static_cast<std::mt19937::result_type>(TFV_CONFIG().getMasterSeed()));
 
+        // Reset state.
+        m_world.clear();
+        m_segmentStats.clear();
+        m_speedLimits.clear();
+        m_lastAction.clear();
+        m_forceDecide.clear();
+        m_tick = 0;
+        m_timeSinceLastUpdate = 0.0;
+
+        // Read model parameters + decision layer from configuration.
+        auto& cfg = TFV_CONFIG();
+        m_idm.v0_cap = cfg.getFloat("sim.idm.v0_cap", 13.9f);
+        m_idm.a_max = cfg.getFloat("sim.idm.a_max", 1.5f);
+        m_idm.b_comfort = cfg.getFloat("sim.idm.b_comfort", 2.0f);
+        m_idm.b_max = cfg.getFloat("sim.idm.b_max", 6.0f);
+        m_idm.s0 = cfg.getFloat("sim.idm.s0", 2.0f);
+        m_idm.T = cfg.getFloat("sim.idm.T", 1.5f);
+        m_idm.delta = cfg.getFloat("sim.idm.delta", 4.0f);
+        m_decisionHz = cfg.getFloat("perf.decision_hz", 10.0f);
+        if(m_decisionHz <= 0.0f)
+            m_decisionHz = 10.0f;
+
+        m_brain = makeBrain(cfg.getString("sim.default_brain", "rule"), m_idm);
+        m_brain->reset(TFV_CONFIG().getMasterSeed());
+
+        // Store vehicles (sorted by id), align velocity to lane direction (avoids a
+        // first-tick heading pop), and initialize per-segment occupancy.
+        m_world.load(std::move(vehicles));
+        for(auto& v : m_world.vehicles())
+        {
+            auto* segment = m_roadNetwork->getSegment(v.segmentId);
+            if(!segment)
+                continue;
+            float sp = glm::length(v.vel);
+            v.vel = segment->dir * sp;
+            segment->vehicleCount++;
+            updateCongestion(v.segmentId);
+        }
+
+        LOG_INFO("Initialized {count} vehicles with brain '{brain}'.",
+                 PARAM(count, m_world.size()), PARAM(brain, m_brain->kindName()));
         return true;
+    }
+
+    Observation Simulation::buildObservation(const Vehicle& self, long leaderIdx,
+                                             const std::vector<Vehicle>& vehs) const
+    {
+        Observation o{}; // zero-initialized; only longitudinal channels are filled
+        const auto* seg = m_roadNetwork ? m_roadNetwork->getSegment(self.segmentId) : nullptr;
+
+        const float vSelf = glm::length(self.vel);
+        o[obs_idx::SelfSpeed] = vSelf / OBS_SPEED_SCALE;
+
+        auto it = m_lastAction.find(self.id);
+        const float prevAccel = (it != m_lastAction.end()) ? it->second.accel : 0.0f;
+        o[obs_idx::SelfAccel] = prevAccel / OBS_ACCEL_SCALE;
+
+        o[obs_idx::PositionAlong] = self.position;
+        o[obs_idx::SpeedLimit] = (seg ? seg->speedLimit : 13.9f) / OBS_SPEED_SCALE;
+        o[obs_idx::Congestion] = seg ? seg->congestionLevel : 0.0f;
+
+        if(leaderIdx >= 0 && seg)
+        {
+            const Vehicle& lead = vehs[static_cast<std::size_t>(leaderIdx)];
+            float gapM = (lead.position - self.position) * seg->length -
+                         0.5f * (self.length + lead.length); // bumper-to-bumper (meters)
+            if(gapM < 0.1f)
+                gapM = 0.1f;
+            const float dv = vSelf - glm::length(lead.vel);
+            o[obs_idx::FrontGap] = std::min(gapM / OBS_RANGE_SCALE, 1.0f);
+            o[obs_idx::FrontRelSpeed] = dv / OBS_SPEED_SCALE;
+            o[obs_idx::FrontHasLeader] = 1.0f;
+        }
+        else
+        {
+            o[obs_idx::FrontGap] = 1.0f; // free road
+            o[obs_idx::FrontHasLeader] = 0.0f;
+        }
+        return o;
     }
 
     void Simulation::update(double dt)
@@ -86,16 +149,75 @@ namespace tfv
         // Update time since last statistics update
         m_timeSinceLastUpdate += dt;
 
-        if(m_roadNetwork)
+        if(m_roadNetwork && m_brain)
         {
             // Deterministic, ascending-id ordering (no unordered_map iteration).
             auto& vehs = m_world.vehicles();
             const float fdt = static_cast<float>(dt);
+            const int ticksPerDecision =
+                std::max(1, static_cast<int>(std::lround((1.0 / dt) / m_decisionHz)));
+            const bool decisionTick = (m_tick % static_cast<uint64_t>(ticksPerDecision)) == 0;
 
-            // --- Phase A: sense/decide (read-only over the current frame) ---
-            // Compute each vehicle's intended velocity/distance from frame-N state
-            // WITHOUT mutating shared world state, so the result is independent of
-            // iteration order. This is the substrate the brain step builds on later.
+            // ----- Phase A: sense + decide (read-only over the current frame) -----
+
+            // (1) Find each vehicle's same-segment leader deterministically: bucket
+            //     indices by segment, sort each bucket by (position asc, id asc); the
+            //     leader is the next vehicle strictly ahead. Co-located vehicles
+            //     (equal position) are not leaders (avoids a deadlock). Cross-segment
+            //     leaders are deferred to the Phase 5 perception system.
+            std::unordered_map<uint32_t, std::vector<std::size_t>> bySeg;
+            bySeg.reserve(vehs.size());
+            for(std::size_t i = 0; i < vehs.size(); ++i)
+                bySeg[vehs[i].segmentId].push_back(i);
+
+            std::vector<long> leaderOf(vehs.size(), -1);
+            for(auto& [seg, idxs] : bySeg)
+            {
+                std::sort(idxs.begin(), idxs.end(), [&](std::size_t a, std::size_t b) {
+                    if(vehs[a].position != vehs[b].position)
+                        return vehs[a].position < vehs[b].position;
+                    return vehs[a].id < vehs[b].id;
+                });
+                for(std::size_t k = 0; k + 1 < idxs.size(); ++k)
+                {
+                    const std::size_t self = idxs[k];
+                    for(std::size_t j = k + 1; j < idxs.size(); ++j)
+                    {
+                        if(vehs[idxs[j]].position > vehs[self].position)
+                        {
+                            leaderOf[self] = static_cast<long>(idxs[j]);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // (2) Decide actions (batched) for vehicles due this tick; reuse the held
+            //     action otherwise. New or just-handed-off vehicles always decide.
+            std::vector<std::size_t> deciders;
+            deciders.reserve(vehs.size());
+            for(std::size_t i = 0; i < vehs.size(); ++i)
+            {
+                const uint64_t id = vehs[i].id;
+                if(decisionTick || m_forceDecide.count(id) || !m_lastAction.count(id))
+                    deciders.push_back(i);
+            }
+            m_forceDecide.clear();
+
+            if(!deciders.empty())
+            {
+                std::vector<Observation> obs(deciders.size());
+                for(std::size_t k = 0; k < deciders.size(); ++k)
+                    obs[k] = buildObservation(vehs[deciders[k]], leaderOf[deciders[k]], vehs);
+
+                std::vector<Action> out(deciders.size());
+                m_brain->decideBatch(obs.data(), static_cast<int>(deciders.size()), out.data());
+
+                for(std::size_t k = 0; k < deciders.size(); ++k)
+                    m_lastAction[vehs[deciders[k]].id] = out[k];
+            }
+
+            // (3) Integrate each vehicle's (fresh or held) action into intended motion.
             struct Step
             {
                 glm::vec2 vel{0.f, 0.f};
@@ -106,20 +228,20 @@ namespace tfv
             std::vector<Step> steps(vehs.size());
             for(std::size_t i = 0; i < vehs.size(); ++i)
             {
-                const Vehicle& v = vehs[i];
-                const auto* segment = m_roadNetwork->getSegment(v.segmentId);
+                const auto* segment = m_roadNetwork->getSegment(vehs[i].segmentId);
                 if(!segment)
                     continue;
-
-                // Integrate acceleration. acc is 0 until a brain produces it in
-                // Phase 2; this wires the integration path now.
-                glm::vec2 newVel = v.vel + v.acc * fdt;
-                float speedFactor = 1.0f - segment->congestionLevel * 0.8f;
-                float speed = glm::length(newVel) * speedFactor;
-                steps[i] = Step{newVel, speed, speed * fdt, true};
+                // Every vehicle is guaranteed an entry by the decide step above
+                // (deciders include any first-seen id). .at() asserts that invariant
+                // and keeps this read-only integrate step free of map mutation.
+                const Action& a = m_lastAction.at(vehs[i].id);
+                const float accel = std::clamp(a.accel, -m_idm.b_max, m_idm.a_max);
+                const float vOld = glm::length(vehs[i].vel);
+                const float vNew = std::max(0.0f, vOld + accel * fdt);
+                steps[i] = Step{segment->dir * vNew, vNew, vNew * fdt, true};
             }
 
-            // --- Phase B: act/commit (apply intents to produce frame N+1) ---
+            // ----- Phase B: act/commit (apply intents to produce frame N+1) -----
             for(std::size_t i = 0; i < vehs.size(); ++i)
             {
                 if(!steps[i].valid)
@@ -150,7 +272,8 @@ namespace tfv
                             nextSeg->vehicleCount++;
 
                         v.segmentId = nextSegmentId;
-                        v.position -= 1.f; // carry over the overshoot
+                        v.position -= 1.f;            // carry over the overshoot
+                        m_forceDecide.insert(v.id);   // re-decide for the new segment's v0
                     }
                     else
                     {
@@ -160,6 +283,8 @@ namespace tfv
 
                 segment->currentSpeed = steps[i].speed;
             }
+
+            ++m_tick;
         }
 
         // Update segment statistics and congestion levels periodically
@@ -274,6 +399,8 @@ namespace tfv
         }
 
         m_world.removeVehicle(id);
+        m_lastAction.erase(id);
+        m_forceDecide.erase(id);
     }
 
     void Simulation::setSpeedLimit(uint32_t segmentId, float limit)

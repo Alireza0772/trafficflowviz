@@ -53,9 +53,17 @@ namespace tfv
             RoadVisual r{};
             char comma;
 
+            // Coordinates are floats in the CSV (e.g. 541.42). Parse as float and
+            // truncate to the int pixel fields — reading floats straight into int
+            // via >> stops at the '.', corrupting every later coordinate.
             uint32_t segId;
-            ss >> segId >> comma >> r.x1 >> comma >> r.y1 >> comma >> r.x2 >> comma >> r.y2;
+            float x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+            ss >> segId >> comma >> x1 >> comma >> y1 >> comma >> x2 >> comma >> y2;
             r.id = segId;
+            r.x1 = static_cast<int>(x1);
+            r.y1 = static_cast<int>(y1);
+            r.x2 = static_cast<int>(x2);
+            r.y2 = static_cast<int>(y2);
 
             if(ss)
             {

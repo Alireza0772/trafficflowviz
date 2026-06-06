@@ -44,6 +44,9 @@ namespace tfv
         // drawable-pixels / window-points (1.0 except on hi-DPI displays)
         float framebufferScale() const;
 
+        // Center + scale the camera so the whole road network fits the viewport.
+        void fitToView();
+
         Renderer* m_renderer;
         Simulation* m_simulation;
 

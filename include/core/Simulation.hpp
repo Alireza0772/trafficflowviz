@@ -2,9 +2,14 @@
 #define TFV_SIMULATION_HPP
 
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <random>
+#include <unordered_set>
+#include <vector>
 
+#include "agents/Brain.hpp"
+#include "agents/IdmParams.hpp"
 #include "core/RoadNetwork.hpp"
 #include "core/TrafficEntity.hpp"
 #include "core/World.hpp"
@@ -31,6 +36,10 @@ namespace tfv
 
         bool initialize(const std::filesystem::path& cityInformationPath,
                         const std::filesystem::path& vehicleInformationPath);
+
+        /** Programmatic initialization: uses the already-set road network and the
+         *  given vehicles (no CSV). Used by tests and headless runs. */
+        bool initialize(std::vector<Vehicle> vehicles);
 
         /** Advance physics by `dt` seconds. */
         void update(double dt);
@@ -71,6 +80,10 @@ namespace tfv
         // Check for alert conditions
         void checkAlerts();
 
+        // Build the normalized observation for a vehicle (leaderIdx < 0 = free road).
+        Observation buildObservation(const Vehicle& self, long leaderIdx,
+                                     const std::vector<Vehicle>& vehs) const;
+
         World m_world;
         RoadNetwork* m_roadNetwork{nullptr};
         SegmentStatsMap m_segmentStats;
@@ -88,6 +101,14 @@ namespace tfv
 
         // Seeded RNG stream for deterministic routing (replaces global rand()).
         std::mt19937 m_rng;
+
+        // Agent decision layer (Phase 2)
+        std::unique_ptr<IBrain> m_brain;            // current decision brain (default: rule)
+        IdmParams m_idm;                            // model params (also used for accel clamp)
+        std::unordered_map<uint64_t, Action> m_lastAction; // held action per vehicle id
+        std::unordered_set<uint64_t> m_forceDecide; // ids that must re-decide next tick (handoff)
+        uint64_t m_tick{0};                         // simulation tick counter
+        float m_decisionHz{10.0f};                  // brain decision rate (Hz)
     };
 
 } // namespace tfv

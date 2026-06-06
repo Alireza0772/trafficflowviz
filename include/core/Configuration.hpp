@@ -79,10 +79,17 @@ namespace tfv
         bool isMetricsEnabled() const;
         bool isDebugMode() const;
         
-        // Generic get/set for extensibility
+        // Generic typed access (concrete, non-template — safe to link).
+        // Returns the configured value for `key`, or `defaultValue` if unset.
+        float getFloat(const std::string& key, float defaultValue) const;
+        int getInt(const std::string& key, int defaultValue) const;
+        std::string getString(const std::string& key, const std::string& defaultValue) const;
+
+        // Generic get/set for extensibility (NOTE: templates are declared but not
+        // defined; do not use until implemented — prefer the typed getters above).
         template<typename T>
         std::optional<T> get(const std::string& key) const;
-        
+
         template<typename T>
         void set(const std::string& key, const T& value);
         

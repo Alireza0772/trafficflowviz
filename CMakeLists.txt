@@ -139,7 +139,7 @@ endif()
 # Optional testing
 if(TFV_ENABLE_TESTING)
     enable_testing()
-    # add_subdirectory(tests) # TODO: Create tests directory
+    add_subdirectory(tests)
 endif()
 
 # Optional documentation

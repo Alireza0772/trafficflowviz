@@ -1,9 +1,11 @@
 #include "rendering/layers/SimulationLayer.hpp"
 #include "core/Events/KeyEvent.hpp"
 #include "core/Events/MouseEvent.hpp"
+#include "utils/LoggingManager.hpp"
 #include <SDL2/SDL.h>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace tfv
 {
@@ -24,6 +26,48 @@ namespace tfv
     {
         m_sceneRenderer = std::make_unique<SceneRenderer>(m_renderer);
         m_sceneRenderer->setNetwork(m_simulation->getRoadNetwork());
+        fitToView(); // frame the network so it is not stranded in a corner / off-screen
+    }
+
+    void SimulationLayer::fitToView()
+    {
+        const RoadNetwork* net = m_simulation ? m_simulation->getRoadNetwork() : nullptr;
+        if(!net)
+            return;
+        const auto& segs = net->segments();
+        if(segs.empty())
+            return;
+
+        float minX = std::numeric_limits<float>::max();
+        float minY = std::numeric_limits<float>::max();
+        float maxX = -std::numeric_limits<float>::max();
+        float maxY = -std::numeric_limits<float>::max();
+        for(const auto& s : segs)
+        {
+            minX = std::min({minX, float(s.x1), float(s.x2)});
+            maxX = std::max({maxX, float(s.x1), float(s.x2)});
+            minY = std::min({minY, float(s.y1), float(s.y2)});
+            maxY = std::max({maxY, float(s.y1), float(s.y2)});
+        }
+        const float bw = std::max(1.0f, maxX - minX);
+        const float bh = std::max(1.0f, maxY - minY);
+
+        // Viewport in scene (framebuffer pixel) space.
+        int ow = 1280, oh = 720;
+        if(auto* sr = static_cast<SDL_Renderer*>(m_renderer->getNativeRenderer()))
+            SDL_GetRendererOutputSize(sr, &ow, &oh);
+
+        const float scale = 0.9f * std::min(float(ow) / bw, float(oh) / bh);
+        const float cx = 0.5f * (minX + maxX);
+        const float cy = 0.5f * (minY + maxY);
+        const int panX = static_cast<int>(0.5f * ow - cx * scale);
+        const int panY = static_cast<int>(0.5f * oh - cy * scale);
+        m_sceneRenderer->setZoom(scale);
+        m_sceneRenderer->setPan(panX, panY);
+
+        LOG_INFO("fitToView: network bbox ({minx},{miny})-({maxx},{maxy}) -> scale {s}",
+                 PARAM(minx, minX), PARAM(miny, minY), PARAM(maxx, maxX), PARAM(maxy, maxY),
+                 PARAM(s, scale));
     }
 
     void SimulationLayer::onDetach()
