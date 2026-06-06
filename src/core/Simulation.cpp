@@ -29,7 +29,7 @@ namespace tfv
         m_rng.seed(static_cast<std::mt19937::result_type>(TFV_CONFIG().getMasterSeed()));
 
         // Clear previous data
-        m_vehicles.clear();
+        m_world.clear();
         m_segmentStats.clear();
         m_speedLimits.clear();
         m_timeSinceLastUpdate = 0.0;
@@ -54,11 +54,12 @@ namespace tfv
             return false;
         }
 
-        for(const auto& v : vehicles)
-        {
-            m_vehicles[v.id] = v;
+        // Store vehicles in the World (contiguous, sorted by id for determinism).
+        m_world.load(std::move(vehicles));
 
-            // Update congestion for the segment
+        // Initialize per-segment occupancy from the loaded vehicles.
+        for(const auto& v : m_world.vehicles())
+        {
             if(m_roadNetwork)
             {
                 auto* segment = m_roadNetwork->getSegment(v.segmentId);
@@ -73,7 +74,7 @@ namespace tfv
             }
         }
 
-        LOG_INFO("Initialized {count} vehicles in the simulation.", PARAM(count, vehicles.size()));
+        LOG_INFO("Initialized {count} vehicles in the simulation.", PARAM(count, m_world.size()));
 
         return true;
     }
@@ -85,67 +86,80 @@ namespace tfv
         // Update time since last statistics update
         m_timeSinceLastUpdate += dt;
 
-        // Update vehicle positions
-        for(auto& [id, v] : m_vehicles)
+        if(m_roadNetwork)
         {
-            if(!m_roadNetwork)
-                continue;
+            // Deterministic, ascending-id ordering (no unordered_map iteration).
+            auto& vehs = m_world.vehicles();
+            const float fdt = static_cast<float>(dt);
 
-            // Get the road segment for this vehicle
-            auto segment = m_roadNetwork->getSegment(v.segmentId);
-            if(!segment)
-                continue;
-
-            // Adjust speed based on congestion
-            float speedFactor = 1.0f - segment->congestionLevel * 0.8f;
-
-            // Move vehicle along its segment by its velocity's magnitude
-            float speed = glm::length(v.vel) * speedFactor;
-            float distance = speed * static_cast<float>(dt);
-            float prevPosition = v.position;
-            v.position += distance / segment->length; // position is 0..1 along segment
-
-            // If vehicle passes end of segment, move to next segment
-            if(v.position > 1.f)
+            // --- Phase A: sense/decide (read-only over the current frame) ---
+            // Compute each vehicle's intended velocity/distance from frame-N state
+            // WITHOUT mutating shared world state, so the result is independent of
+            // iteration order. This is the substrate the brain step builds on later.
+            struct Step
             {
-                if(m_roadNetwork)
+                glm::vec2 vel{0.f, 0.f};
+                float speed{0.f};
+                float distance{0.f};
+                bool valid{false};
+            };
+            std::vector<Step> steps(vehs.size());
+            for(std::size_t i = 0; i < vehs.size(); ++i)
+            {
+                const Vehicle& v = vehs[i];
+                const auto* segment = m_roadNetwork->getSegment(v.segmentId);
+                if(!segment)
+                    continue;
+
+                // Integrate acceleration. acc is 0 until a brain produces it in
+                // Phase 2; this wires the integration path now.
+                glm::vec2 newVel = v.vel + v.acc * fdt;
+                float speedFactor = 1.0f - segment->congestionLevel * 0.8f;
+                float speed = glm::length(newVel) * speedFactor;
+                steps[i] = Step{newVel, speed, speed * fdt, true};
+            }
+
+            // --- Phase B: act/commit (apply intents to produce frame N+1) ---
+            for(std::size_t i = 0; i < vehs.size(); ++i)
+            {
+                if(!steps[i].valid)
+                    continue;
+                Vehicle& v = vehs[i];
+                auto* segment = m_roadNetwork->getSegment(v.segmentId);
+                if(!segment)
+                    continue;
+
+                v.vel = steps[i].vel;
+                v.position += steps[i].distance / segment->length; // 0..1 along segment
+
+                // If the vehicle passes the end of its segment, hand off to the next.
+                if(v.position > 1.f)
                 {
-                    // Get the next segment from the road network
                     const auto* fromNode = m_roadNetwork->getNode(segment->toNode);
                     if(fromNode && !fromNode->outgoing.empty())
                     {
-                        // Choose an outgoing segment via the seeded RNG stream
-                        // (deterministic given the master seed; replaces rand()).
+                        // Seeded RNG -> deterministic given the master seed.
                         std::uniform_int_distribution<size_t> pick(
                             0, fromNode->outgoing.size() - 1);
                         uint32_t nextSegmentId = fromNode->outgoing[pick(m_rng)];
 
-                        // Maintain per-segment vehicle counts on hand-off so the
-                        // congestion model tracks actual occupancy as vehicles move.
+                        // Maintain per-segment vehicle counts on hand-off.
                         if(segment->vehicleCount > 0)
                             segment->vehicleCount--;
                         if(auto* nextSeg = m_roadNetwork->getSegment(nextSegmentId))
                             nextSeg->vehicleCount++;
 
-                        // Update the vehicle's segment and carry over extra distance
                         v.segmentId = nextSegmentId;
-                        v.position = v.position - 1.f;
+                        v.position -= 1.f; // carry over the overshoot
                     }
                     else
                     {
-                        // No outgoing segments, loop back to beginning
-                        v.position -= 1.f;
+                        v.position -= 1.f; // no outgoing edges: loop within the segment
                     }
                 }
-                else
-                {
-                    // No road network, simple loop for demo
-                    v.position -= 1.f;
-                }
-            }
 
-            // Record current speed for segment statistics
-            segment->currentSpeed = speed;
+                segment->currentSpeed = steps[i].speed;
+            }
         }
 
         // Update segment statistics and congestion levels periodically
@@ -155,7 +169,7 @@ namespace tfv
             std::unordered_map<uint32_t, int> vehiclesPerSegment;
             std::unordered_map<uint32_t, float> avgSpeedPerSegment;
 
-            for(const auto& [id, v] : m_vehicles)
+            for(const auto& v : m_world.vehicles())
             {
                 vehiclesPerSegment[v.segmentId]++;
                 avgSpeedPerSegment[v.segmentId] += glm::length(v.vel);
@@ -194,7 +208,7 @@ namespace tfv
     VehicleMap Simulation::snapshot() const
     {
         std::scoped_lock lock(m_mtx);
-        return m_vehicles; // copy
+        return m_world.toMap();
     }
 
     SegmentStatsMap Simulation::getSegmentStats() const
@@ -227,7 +241,7 @@ namespace tfv
     {
         std::scoped_lock lock(m_mtx);
         LOG_DEBUG("Adding vehicle {id}", PARAM(id, v.id));
-        m_vehicles[v.id] = v;
+        m_world.addVehicle(v);
 
         // Update congestion for the segment
         if(m_roadNetwork)
@@ -247,10 +261,10 @@ namespace tfv
         LOG_DEBUG("Removing vehicle {id}", PARAM(id, id));
 
         // Update segment vehicle count
-        auto it = m_vehicles.find(id);
-        if(it != m_vehicles.end() && m_roadNetwork)
+        const Vehicle* vp = m_world.find(id);
+        if(vp && m_roadNetwork)
         {
-            uint32_t segmentId = it->second.segmentId;
+            uint32_t segmentId = vp->segmentId;
             auto* segment = m_roadNetwork->getSegment(segmentId);
             if(segment && segment->vehicleCount > 0)
             {
@@ -259,7 +273,7 @@ namespace tfv
             }
         }
 
-        m_vehicles.erase(id);
+        m_world.removeVehicle(id);
     }
 
     void Simulation::setSpeedLimit(uint32_t segmentId, float limit)

@@ -22,11 +22,11 @@ namespace tfv
     // Vehicle representation
     struct Vehicle
     {
-        uint64_t id;             // Unique identifier
-        uint32_t segmentId;      // Current road segment
-        float position;          // Normalized position along segment (0-1)
-        glm::vec2 vel;           // Velocity vector
-        glm::vec2 acc;           // Acceleration vector
+        uint64_t id{0};          // Unique identifier
+        uint32_t segmentId{0};   // Current road segment
+        float position{0.0f};    // Normalized position along segment (0-1)
+        glm::vec2 vel{0.0f, 0.0f}; // Velocity vector
+        glm::vec2 acc{0.0f, 0.0f}; // Acceleration vector (glm does not zero-init by default)
         float length{4.5f};      // Vehicle length in meters
         float width{1.8f};       // Vehicle width in meters
         std::string type{"car"}; // Vehicle type (car, truck, etc.)

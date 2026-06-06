@@ -7,6 +7,7 @@
 
 #include "core/RoadNetwork.hpp"
 #include "core/TrafficEntity.hpp"
+#include "core/World.hpp"
 
 namespace tfv
 {
@@ -70,7 +71,7 @@ namespace tfv
         // Check for alert conditions
         void checkAlerts();
 
-        VehicleMap m_vehicles;
+        World m_world;
         RoadNetwork* m_roadNetwork{nullptr};
         SegmentStatsMap m_segmentStats;
         std::unordered_map<uint32_t, float> m_speedLimits;
