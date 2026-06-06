@@ -47,6 +47,9 @@ namespace tfv
         /** Thread‑safe copy for rendering. */
         VehicleMap snapshot() const;
 
+        /** Number of vehicles (cheap; avoids a full snapshot copy just to count). */
+        std::size_t vehicleCount() const;
+
         /** Get segment statistics for visualization */
         SegmentStatsMap getSegmentStats() const;
 
@@ -84,6 +87,9 @@ namespace tfv
         Observation buildObservation(const Vehicle& self, long leaderIdx,
                                      const std::vector<Vehicle>& vehs) const;
 
+        // Nearest STOP/YIELD sign ahead of the vehicle on its current segment (null if none).
+        const Sign* nearestStopAhead(const Vehicle& v) const;
+
         World m_world;
         RoadNetwork* m_roadNetwork{nullptr};
         SegmentStatsMap m_segmentStats;
@@ -107,6 +113,7 @@ namespace tfv
         IdmParams m_idm;                            // model params (also used for accel clamp)
         std::unordered_map<uint64_t, Action> m_lastAction; // held action per vehicle id
         std::unordered_set<uint64_t> m_forceDecide; // ids that must re-decide next tick (handoff)
+        std::unordered_map<uint64_t, uint32_t> m_signCleared; // id -> stop/yield sign id cleared on its segment
         uint64_t m_tick{0};                         // simulation tick counter
         float m_decisionHz{10.0f};                  // brain decision rate (Hz)
     };

@@ -135,6 +135,7 @@ namespace tfv
         // Data files
         m_values["data.vehicles_file"] = "vehicles/vehicles.csv";
         m_values["data.city_file"] = "roads/roads_complex.csv";
+        m_values["data.signs_file"] = "roads/signs.csv";
         m_values["data.icon_file"] = "icon.png";
         
         // Networking

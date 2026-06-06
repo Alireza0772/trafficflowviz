@@ -31,10 +31,15 @@ namespace tfv
         // Self (idx 0-3)
         inline constexpr int SelfSpeed = 0;     // speed / OBS_SPEED_SCALE
         inline constexpr int SelfAccel = 1;     // last accel / OBS_ACCEL_SCALE
+        inline constexpr int LaneFraction = 2;  // laneIndex / (laneCount-1), 0..1 (Phase 3)
         inline constexpr int PositionAlong = 3; // position along segment, 0..1
         // Segment context (idx 4-7)
-        inline constexpr int SpeedLimit = 4; // segment speed limit / OBS_SPEED_SCALE
-        inline constexpr int Congestion = 5; // segment congestion, 0..1
+        inline constexpr int SpeedLimit = 4;             // effective speed limit / OBS_SPEED_SCALE
+        inline constexpr int Congestion = 5;             // segment congestion, 0..1
+        inline constexpr int DistToNextIntersection = 6; // (1-pos)*length / OBS_RANGE_SCALE (Phase 3)
+        inline constexpr int LaneCount = 7;              // lane count / 8 (Phase 3)
+        // Signal/sign (idx 8-10); 8-9 reserved for traffic lights (Phase 4)
+        inline constexpr int NearestSignType = 10; // normalized sign-type code ahead (Phase 3)
         // Front sector (idx 11-13 of the 4-sector block 11..22)
         inline constexpr int FrontGap = 11;       // bumper gap (m) / OBS_RANGE_SCALE, clamped to 1
         inline constexpr int FrontRelSpeed = 12;  // (v_self - v_leader) / OBS_SPEED_SCALE

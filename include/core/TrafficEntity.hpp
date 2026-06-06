@@ -1,6 +1,8 @@
 #ifndef TFV_TRAFFIC_ENTITY_HPP
 #define TFV_TRAFFIC_ENTITY_HPP
 
+#include <cstddef>
+#include <cstdint>
 #include <glm/glm.hpp>
 #include <string>
 #include <unordered_map>
@@ -17,6 +19,33 @@ namespace tfv
     using VehicleMap = std::unordered_map<uint64_t, Vehicle>;
     using SegmentStatsMap = std::unordered_map<uint32_t, struct SegmentStatistics>;
 
+    // Traffic-sign semantics (Phase 3).
+    enum class SignType : uint8_t
+    {
+        NONE = 0,
+        STOP,
+        YIELD,
+        SPEED_LIMIT
+    };
+
+    // A traffic sign governing a position on a segment.
+    struct Sign
+    {
+        uint32_t id{0};
+        SignType type{SignType::NONE};
+        float value{0.0f};               // SPEED_LIMIT: limit (m/s); otherwise unused
+        uint32_t segmentId{0};           // segment the sign governs
+        float pos{1.0f};                 // normalized position along the segment (0..1)
+        uint32_t laneMask{0xFFFFFFFFu};  // lanes governed (default: all)
+    };
+
+    // A lane within a segment (forward-compatible; lane-change dynamics are Phase 5).
+    struct Lane
+    {
+        uint8_t index{0};
+        uint8_t allowedTurns{0x0F}; // bitmask over {straight,left,right,u}; default all
+    };
+
     // Note: Alert struct is defined in AlertManager.hpp to avoid duplication
 
     // Vehicle representation
@@ -30,6 +59,12 @@ namespace tfv
         float length{4.5f};      // Vehicle length in meters
         float width{1.8f};       // Vehicle width in meters
         std::string type{"car"}; // Vehicle type (car, truck, etc.)
+
+        // Phase 3: lane-keeping + routing-by-intent
+        uint8_t laneIndex{0};            // current lane (lane-keeping only; no lateral motion yet)
+        std::vector<uint32_t> route;     // ordered segment ids still to traverse (empty = wander)
+        std::size_t routeIdx{0};         // cursor into route
+        uint32_t destNode{0};            // destination node (0 = loop/wander)
     };
 
     // Road segment (edge in the road network)
@@ -45,6 +80,10 @@ namespace tfv
         float congestionLevel{0.0f}; // Traffic congestion level (0-1)
         float currentSpeed{13.9f};   // Current average speed (m/s)
         glm::vec2 dir;               // Direction vector (normalized)
+
+        // Phase 3 (forward-compatible; empty => fall back to the `lanes` count)
+        std::vector<Lane> laneDefs;    // explicit lane definitions (empty => use `lanes` count)
+        std::vector<uint32_t> signIds; // signs governing this segment
     };
 
     // Node in the road network (intersection)
@@ -54,6 +93,7 @@ namespace tfv
         glm::vec2 pos;                  // Position (x, y)
         std::vector<uint32_t> incoming; // Incoming segment IDs
         std::vector<uint32_t> outgoing; // Outgoing segment IDs
+        uint32_t intersectionId{0};     // owning intersection (Phase 4; unused now)
     };
 
     // Statistics for a road segment

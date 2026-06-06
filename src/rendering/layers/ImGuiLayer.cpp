@@ -283,7 +283,7 @@ namespace tfv
             ImGui::Text("FPS: %d", m_fps);
 
             ImGui::SameLine(100);
-            int vehicleCount = m_simulation ? m_simulation->snapshot().size() : 0;
+            int vehicleCount = m_simulation ? static_cast<int>(m_simulation->vehicleCount()) : 0;
             ImGui::Text("Vehicles: %d", vehicleCount);
 
             if(m_simulationLayer)

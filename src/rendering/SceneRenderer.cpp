@@ -13,8 +13,44 @@ namespace tfv
         VehicleRenderer vehR(m_r, m_panX, m_panY, m_scale, m_antiAliasing);
         vehR.draw(vehicles, m_net);
 
+        drawSigns();
+
         // Store the snapshot for later renders
         m_lastSnapshot = vehicles;
+    }
+
+    void SceneRenderer::drawSigns()
+    {
+        if(!m_net)
+            return;
+        const auto& segs = m_net->segments();
+        for(const auto& [sid, sign] : m_net->signs())
+        {
+            const RoadVisual* rv = nullptr;
+            for(const auto& s : segs)
+                if(s.id == sign.segmentId)
+                {
+                    rv = &s;
+                    break;
+                }
+            if(!rv)
+                continue;
+
+            const float wx = rv->x1 + (rv->x2 - rv->x1) * sign.pos;
+            const float wy = rv->y1 + (rv->y2 - rv->y1) * sign.pos;
+            const int sx = static_cast<int>(wx * m_scale) + m_panX;
+            const int sy = static_cast<int>(wy * m_scale) + m_panY;
+
+            switch(sign.type)
+            {
+            case SignType::STOP:        m_r->setColor(220, 40, 40, 255); break;
+            case SignType::YIELD:       m_r->setColor(235, 200, 40, 255); break;
+            case SignType::SPEED_LIMIT: m_r->setColor(240, 240, 240, 255); break;
+            default:                    m_r->setColor(180, 180, 180, 255); break;
+            }
+            const int sz = std::max(5, static_cast<int>(5 * m_scale));
+            m_r->fillRect(sx - sz / 2, sy - sz / 2, sz, sz);
+        }
     }
 
     void SceneRenderer::update(double dt)
@@ -64,9 +100,6 @@ namespace tfv
             auto a2 = toScreen(x2 + nx * half, y2 + ny * half);
             auto b1 = toScreen(x1 - nx * half, y1 - ny * half);
             auto b2 = toScreen(x2 - nx * half, y2 - ny * half);
-
-            // Calculate the road width in pixels
-            float roadWidthPx = roadWidth * m_scale;
 
             // Set color for roads
             m_r->setColor(200, 200, 200, 255);

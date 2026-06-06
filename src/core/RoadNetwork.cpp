@@ -1,7 +1,10 @@
 #include "core/RoadNetwork.hpp"
 #include "utils/LoggingManager.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <glm/glm.hpp>
 #include <iostream>
@@ -26,7 +29,6 @@ namespace tfv
     bool RoadNetwork::loadCSV(const std::filesystem::path& path)
     {
         m_seg.clear();
-        m_adj.clear(); // Initialize adjacency list
         m_segments.clear();
         m_nodes.clear();
 
@@ -112,12 +114,8 @@ namespace tfv
                 // Add to segment map
                 m_segments[segId] = segment;
 
-                // Update node's outgoing segments
+                // Update node's outgoing segments (single source of truth for routing)
                 m_nodes[segment.fromNode].outgoing.push_back(segId);
-
-                // Update adjacency list for routing
-                m_adj[r.x1].push_back(r.id);
-                m_adj[r.x2].push_back(r.id);
             }
         }
         LOG_INFO("loaded {count} segments from {file}", PARAM(count, m_seg.size()),
@@ -126,35 +124,50 @@ namespace tfv
         return !m_seg.empty();
     }
 
-    std::vector<uint32_t> RoadNetwork::route(uint32_t src, uint32_t dst) const
+    std::vector<uint32_t> RoadNetwork::route(uint32_t srcNode, uint32_t dstNode) const
     {
-        if(src == dst)
+        if(srcNode == dstNode)
             return {};
-        std::unordered_map<uint32_t, uint32_t> prevSeg;
+
+        // Deterministic BFS over the NODE graph using Node.outgoing (segment ids).
+        // outgoing is in stable insertion order, so tie-breaks are reproducible.
+        std::unordered_map<uint32_t, uint32_t> prevSeg; // nextNode -> segment used to reach it
         std::queue<uint32_t> q;
-        q.push(src);
-        std::unordered_set<uint32_t> visited{src};
+        q.push(srcNode);
+        std::unordered_set<uint32_t> visited{srcNode};
+
         while(!q.empty())
         {
-            uint32_t n = q.front();
+            const uint32_t n = q.front();
             q.pop();
-            for(uint32_t segId : m_adj.at(n))
+            const Node* node = getNode(n);
+            if(!node)
+                continue;
+            for(uint32_t segId : node->outgoing)
             {
-                const auto& seg = m_seg[segId];
-                uint32_t nextNode = (seg.x1 == n) ? seg.x2 : seg.x1;
+                const RoadSegment* seg = getSegment(segId);
+                if(!seg)
+                    continue;
+                const uint32_t nextNode = seg->toNode;
                 if(!visited.insert(nextNode).second)
                     continue;
                 prevSeg[nextNode] = segId;
-                if(nextNode == dst)
-                { // back‑track
+                if(nextNode == dstNode)
+                {
+                    // Back-track segment ids from dst to src.
                     std::vector<uint32_t> route;
-                    uint32_t cur = dst;
-                    while(cur != src)
+                    uint32_t cur = dstNode;
+                    while(cur != srcNode)
                     {
-                        uint32_t id = prevSeg[cur];
+                        auto it = prevSeg.find(cur);
+                        if(it == prevSeg.end())
+                            return {}; // defensive: broken chain
+                        const uint32_t id = it->second;
                         route.push_back(id);
-                        const auto& s = m_seg[id];
-                        cur = (s.x1 == cur) ? s.x2 : s.x1;
+                        const RoadSegment* s = getSegment(id);
+                        if(!s)
+                            return {};
+                        cur = s->fromNode;
                     }
                     std::reverse(route.begin(), route.end());
                     return route;
@@ -244,16 +257,86 @@ namespace tfv
             vis.length = segment.length;
 
             m_seg.push_back(vis);
-
-            // Update adjacency list for routing
-            m_adj[vis.x1].push_back(vis.id);
-            m_adj[vis.x2].push_back(vis.id);
         }
     }
 
     void RoadNetwork::addNode(const Node& node)
     {
         m_nodes[node.id] = node;
+    }
+
+    void RoadNetwork::addSign(const Sign& sign)
+    {
+        m_signs[sign.id] = sign;
+        if(auto* seg = getSegment(sign.segmentId))
+        {
+            // Idempotent: don't list the same sign id twice on re-load.
+            if(std::find(seg->signIds.begin(), seg->signIds.end(), sign.id) == seg->signIds.end())
+                seg->signIds.push_back(sign.id);
+        }
+    }
+
+    const Sign* RoadNetwork::getSign(uint32_t id) const
+    {
+        auto it = m_signs.find(id);
+        return (it != m_signs.end()) ? &it->second : nullptr;
+    }
+
+    bool RoadNetwork::loadSignsCSV(const std::filesystem::path& path)
+    {
+        std::ifstream file(path);
+        if(!file.is_open())
+            return false; // signs are optional: missing file is a no-op
+
+        auto parseType = [](std::string s) -> SignType {
+            for(auto& c : s)
+                c = static_cast<char>(::toupper(static_cast<unsigned char>(c)));
+            if(s == "STOP")
+                return SignType::STOP;
+            if(s == "YIELD")
+                return SignType::YIELD;
+            if(s == "SPEED_LIMIT" || s == "SPEEDLIMIT" || s == "LIMIT")
+                return SignType::SPEED_LIMIT;
+            return SignType::NONE;
+        };
+
+        std::string line;
+        std::getline(file, line); // header
+        int loaded = 0;
+        while(std::getline(file, line))
+        {
+            if(line.empty())
+                continue;
+            std::stringstream ss(line);
+            std::string idS, segS, typeS, valS, posS, maskS;
+            if(!std::getline(ss, idS, ','))
+                continue;
+            std::getline(ss, segS, ',');
+            std::getline(ss, typeS, ',');
+            std::getline(ss, valS, ',');
+            std::getline(ss, posS, ',');
+            std::getline(ss, maskS, ',');
+            try
+            {
+                Sign s;
+                s.id = static_cast<uint32_t>(std::stoul(idS));
+                s.segmentId = static_cast<uint32_t>(std::stoul(segS));
+                s.type = parseType(typeS);
+                s.value = valS.empty() ? 0.0f : std::stof(valS);
+                s.pos = posS.empty() ? 1.0f : std::stof(posS);
+                if(!maskS.empty())
+                    s.laneMask = static_cast<uint32_t>(std::stoul(maskS));
+                addSign(s);
+                ++loaded;
+            }
+            catch(const std::exception&)
+            {
+                // skip malformed row
+            }
+        }
+        LOG_INFO("loaded {count} signs from {file}", PARAM(count, loaded),
+                 PARAM(file, path.string()));
+        return true;
     }
 
 } // namespace tfv

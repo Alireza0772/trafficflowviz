@@ -36,6 +36,13 @@ namespace tfv
             }
         }
 
+        // Optional traffic signs (no-op if the file is absent).
+        {
+            auto signsPath = TFV_CONFIG().getDataDirectory() /
+                             TFV_CONFIG().getString("data.signs_file", "roads/signs.csv");
+            m_roadNetwork->loadSignsCSV(signsPath);
+        }
+
         auto vehicles = tfv::loadVehiclesCSV(vehicleInformationPath);
         if(vehicles.empty())
         {
@@ -67,6 +74,7 @@ namespace tfv
         m_speedLimits.clear();
         m_lastAction.clear();
         m_forceDecide.clear();
+        m_signCleared.clear();
         m_tick = 0;
         m_timeSinceLastUpdate = 0.0;
 
@@ -98,6 +106,14 @@ namespace tfv
             v.vel = segment->dir * sp;
             segment->vehicleCount++;
             updateCongestion(v.segmentId);
+
+            // Routing-by-intent: compute the deterministic BFS path toward the
+            // destination node (if any); otherwise the vehicle wanders (outgoing[0]).
+            if(v.destNode != 0)
+            {
+                v.route = m_roadNetwork->route(segment->toNode, v.destNode);
+                v.routeIdx = 0;
+            }
         }
 
         LOG_INFO("Initialized {count} vehicles with brain '{brain}'.",
@@ -119,9 +135,39 @@ namespace tfv
         o[obs_idx::SelfAccel] = prevAccel / OBS_ACCEL_SCALE;
 
         o[obs_idx::PositionAlong] = self.position;
-        o[obs_idx::SpeedLimit] = (seg ? seg->speedLimit : 13.9f) / OBS_SPEED_SCALE;
         o[obs_idx::Congestion] = seg ? seg->congestionLevel : 0.0f;
 
+        // Lane channels (lane-keeping; lane geometry is forward-compatible).
+        const int laneCount = seg ? std::max(1, seg->lanes) : 1;
+        o[obs_idx::LaneCount] = static_cast<float>(laneCount) / 8.0f;
+        o[obs_idx::LaneFraction] =
+            (laneCount > 1) ? static_cast<float>(self.laneIndex) / static_cast<float>(laneCount - 1)
+                            : 0.0f;
+        if(seg)
+            o[obs_idx::DistToNextIntersection] =
+                std::min(((1.0f - self.position) * seg->length) / OBS_RANGE_SCALE, 1.0f);
+
+        // Sign-aware effective speed limit (SPEED_LIMIT signs already passed apply).
+        float effLimit = seg ? seg->speedLimit : 13.9f;
+        if(seg)
+            for(uint32_t sid : seg->signIds)
+            {
+                const Sign* s = m_roadNetwork->getSign(sid);
+                if(s && s->type == SignType::SPEED_LIMIT && s->value > 0.0f &&
+                   s->pos <= self.position + 1e-3f)
+                    effLimit = std::min(effLimit, s->value);
+            }
+        o[obs_idx::SpeedLimit] = effLimit / OBS_SPEED_SCALE;
+
+        const Sign* stopSign = nearestStopAhead(self);
+        o[obs_idx::NearestSignType] =
+            stopSign ? (stopSign->type == SignType::STOP ? 1.0f : 0.66f) : 0.0f;
+
+        // Front constraint = the MORE-restrictive of {real same-segment leader,
+        // governing stop/yield sign} — written into one front-sector slot, never both.
+        bool hasFront = false;
+        float frontGapNorm = 1.0f; // free road
+        float frontRelSpeed = 0.0f;
         if(leaderIdx >= 0 && seg)
         {
             const Vehicle& lead = vehs[static_cast<std::size_t>(leaderIdx)];
@@ -129,17 +175,57 @@ namespace tfv
                          0.5f * (self.length + lead.length); // bumper-to-bumper (meters)
             if(gapM < 0.1f)
                 gapM = 0.1f;
-            const float dv = vSelf - glm::length(lead.vel);
-            o[obs_idx::FrontGap] = std::min(gapM / OBS_RANGE_SCALE, 1.0f);
-            o[obs_idx::FrontRelSpeed] = dv / OBS_SPEED_SCALE;
-            o[obs_idx::FrontHasLeader] = 1.0f;
+            frontGapNorm = std::min(gapM / OBS_RANGE_SCALE, 1.0f);
+            frontRelSpeed = (vSelf - glm::length(lead.vel)) / OBS_SPEED_SCALE;
+            hasFront = true;
         }
-        else
+        if(stopSign && seg)
         {
-            o[obs_idx::FrontGap] = 1.0f; // free road
-            o[obs_idx::FrontHasLeader] = 0.0f;
+            auto cl = m_signCleared.find(self.id);
+            const bool cleared = (cl != m_signCleared.end() && cl->second == stopSign->id);
+            if(!cleared)
+            {
+                float gapM = (stopSign->pos - self.position) * seg->length - 0.5f * self.length;
+                if(gapM < 0.1f)
+                    gapM = 0.1f;
+                const float signGapNorm = std::min(gapM / OBS_RANGE_SCALE, 1.0f);
+                if(!hasFront || signGapNorm < frontGapNorm)
+                {
+                    frontGapNorm = signGapNorm;
+                    frontRelSpeed = vSelf / OBS_SPEED_SCALE; // stationary stop line
+                    hasFront = true;
+                }
+            }
         }
+        o[obs_idx::FrontGap] = frontGapNorm;
+        o[obs_idx::FrontRelSpeed] = frontRelSpeed;
+        o[obs_idx::FrontHasLeader] = hasFront ? 1.0f : 0.0f;
+
         return o;
+    }
+
+    const Sign* Simulation::nearestStopAhead(const Vehicle& v) const
+    {
+        if(!m_roadNetwork)
+            return nullptr;
+        const auto* seg = m_roadNetwork->getSegment(v.segmentId);
+        if(!seg)
+            return nullptr;
+        const Sign* best = nullptr;
+        float bestPos = 2.0f;
+        for(uint32_t sid : seg->signIds)
+        {
+            const Sign* s = m_roadNetwork->getSign(sid);
+            if(!s)
+                continue;
+            if((s->type == SignType::STOP || s->type == SignType::YIELD) && s->pos > v.position &&
+               s->pos < bestPos)
+            {
+                bestPos = s->pos;
+                best = s;
+            }
+        }
+        return best;
     }
 
     void Simulation::update(double dt)
@@ -254,26 +340,74 @@ namespace tfv
                 v.vel = steps[i].vel;
                 v.position += steps[i].distance / segment->length; // 0..1 along segment
 
+                // Stop/yield clearing: once slow near an uncleared sign on this segment,
+                // mark it cleared so the vehicle proceeds next decision (re-accelerate).
+                if(const Sign* sgn = nearestStopAhead(v))
+                {
+                    auto cl = m_signCleared.find(v.id);
+                    const bool cleared = (cl != m_signCleared.end() && cl->second == sgn->id);
+                    if(!cleared)
+                    {
+                        // Hard stop line: an uncleared STOP must not be overshot (bounded
+                        // braking cannot always halt in time) — clamp to the stop line.
+                        if(sgn->type == SignType::STOP && v.position >= sgn->pos)
+                        {
+                            v.position = sgn->pos;
+                            v.vel = glm::vec2(0.0f, 0.0f);
+                        }
+                        // Clear once stopped/slow at the line. Measure the gap the SAME way
+                        // as the IDM virtual leader (bumper -> stop line) so the threshold
+                        // actually covers the equilibrium stopping distance (~s0); otherwise
+                        // the car parks just outside the gate and deadlocks forever.
+                        const float gapM = (sgn->pos - v.position) * segment->length - 0.5f * v.length;
+                        const float releaseSpeed = (sgn->type == SignType::STOP) ? 0.5f : 4.0f;
+                        if(glm::length(v.vel) < releaseSpeed && gapM < (m_idm.s0 + 1.0f))
+                        {
+                            m_signCleared[v.id] = sgn->id;
+                            m_forceDecide.insert(v.id);
+                        }
+                    }
+                }
+
                 // If the vehicle passes the end of its segment, hand off to the next.
                 if(v.position > 1.f)
                 {
                     const auto* fromNode = m_roadNetwork->getNode(segment->toNode);
                     if(fromNode && !fromNode->outgoing.empty())
                     {
-                        // Seeded RNG -> deterministic given the master seed.
-                        std::uniform_int_distribution<size_t> pick(
-                            0, fromNode->outgoing.size() - 1);
-                        uint32_t nextSegmentId = fromNode->outgoing[pick(m_rng)];
+                        // Deterministic route-following (no RNG): take the route's next
+                        // segment if it is a valid outgoing here, else fall back to outgoing[0].
+                        uint32_t nextSegmentId = fromNode->outgoing[0];
+                        if(v.routeIdx < v.route.size())
+                        {
+                            const uint32_t want = v.route[v.routeIdx];
+                            if(std::find(fromNode->outgoing.begin(), fromNode->outgoing.end(),
+                                         want) != fromNode->outgoing.end())
+                            {
+                                nextSegmentId = want;
+                                ++v.routeIdx;
+                            }
+                        }
 
-                        // Maintain per-segment vehicle counts on hand-off.
-                        if(segment->vehicleCount > 0)
-                            segment->vehicleCount--;
+                        // Commit the hand-off only if the next segment really exists;
+                        // otherwise leave the vehicle in a consistent state (loop).
                         if(auto* nextSeg = m_roadNetwork->getSegment(nextSegmentId))
+                        {
+                            if(segment->vehicleCount > 0)
+                                segment->vehicleCount--;
                             nextSeg->vehicleCount++;
-
-                        v.segmentId = nextSegmentId;
-                        v.position -= 1.f;            // carry over the overshoot
-                        m_forceDecide.insert(v.id);   // re-decide for the new segment's v0
+                            // Lane-keeping: clamp lane index to the new segment's lane count.
+                            v.laneIndex = static_cast<uint8_t>(
+                                std::min<int>(v.laneIndex, std::max(0, nextSeg->lanes - 1)));
+                            v.segmentId = nextSegmentId;
+                            v.position -= 1.f;          // carry over the overshoot
+                            m_signCleared.erase(v.id);  // re-evaluate signs on the new segment
+                            m_forceDecide.insert(v.id); // re-decide for the new segment's v0
+                        }
+                        else
+                        {
+                            v.position -= 1.f; // next segment missing (bad data): loop in place
+                        }
                     }
                     else
                     {
@@ -334,6 +468,12 @@ namespace tfv
     {
         std::scoped_lock lock(m_mtx);
         return m_world.toMap();
+    }
+
+    std::size_t Simulation::vehicleCount() const
+    {
+        std::scoped_lock lock(m_mtx);
+        return m_world.size();
     }
 
     SegmentStatsMap Simulation::getSegmentStats() const
@@ -401,6 +541,7 @@ namespace tfv
         m_world.removeVehicle(id);
         m_lastAction.erase(id);
         m_forceDecide.erase(id);
+        m_signCleared.erase(id);
     }
 
     void Simulation::setSpeedLimit(uint32_t segmentId, float limit)
