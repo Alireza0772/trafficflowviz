@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(TrafficFlowViz VERSION 1.0.0 LANGUAGES CXX)
+project(TrafficFlowViz VERSION 1.0.0 LANGUAGES C CXX)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 23)

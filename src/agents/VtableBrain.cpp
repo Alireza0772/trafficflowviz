@@ -10,6 +10,11 @@ namespace tfv
     // The reinterpret_cast in decideBatch + flat-buffer indexing are sound only if the C
     // POD is layout-identical AND trivially-copyable. Enforce at compile time; bump
     // TFV_BRAIN_ACT_LAYOUT if this changes.
+    // The ABI gate accepts a brain iff desc.obsLen == TFV_BRAIN_OBS_LEN, while decideBatch
+    // strides the buffer by tfv::OBS_LEN — enforce they are the SAME constant at compile time
+    // (else a future OBS_LEN change would silently OOB-read every loaded plugin).
+    static_assert(static_cast<unsigned>(OBS_LEN) == TFV_BRAIN_OBS_LEN,
+                  "TFV_BRAIN_OBS_LEN must equal tfv::OBS_LEN");
     static_assert(sizeof(tfv_action) == sizeof(Action), "tfv_action must match tfv::Action size");
     static_assert(alignof(tfv_action) == alignof(Action), "tfv_action must match alignment");
     static_assert(std::is_standard_layout<Action>::value, "Action must be standard-layout");

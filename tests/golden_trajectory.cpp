@@ -15,6 +15,8 @@
 #include "agents/Action.hpp"
 #include "agents/IdmParams.hpp"
 #include "agents/NNBrain.hpp"
+#include "agents/VtableBrain.hpp"
+#include "agents/tfv_brain.h"
 #include "core/Configuration.hpp"
 #include "core/RoadNetwork.hpp"
 #include "core/Simulation.hpp"
@@ -35,6 +37,7 @@ using namespace tfv;
 static constexpr uint64_t kGolden = 0x9cb6732614cb624cULL; // hashes laneIndex (Phase 6)
 static constexpr uint64_t kGoldenMultiLane = 0x9a695a4adfbfd3e7ULL; // Gate 9 overtake
 static constexpr uint64_t kGoldenNN = 0xf164396f8160724dULL;        // Gate 10 NN determinism
+static constexpr uint64_t kGoldenVtable = 0x626e52c4a6c7691bULL;   // Gate 11 vtable adapter
 
 namespace
 {
@@ -438,6 +441,124 @@ static NNResult nnRun()
     return r;
 }
 
+// Gate 11: the C-ABI vtable adapter (VtableBrain). A static in-process "cruise" brain
+// implementing tfv_brain.h is wrapped via VtableBrain and run — exercising the adapter
+// + ABI gates without needing a real .so. Asserts run-twice determinism + bounded.
+namespace
+{
+    void vt_destroy(void*) {}
+    void vt_decide(void*, const float* obs, int n, int obsLen, tfv_action* out)
+    {
+        for(int k = 0; k < n; ++k)
+        {
+            const float* o = obs + static_cast<std::size_t>(k) * obsLen;
+            const float speed = o[0] * 40.0f, v0 = o[4] * 40.0f;
+            float a = (v0 - speed) * 0.4f;
+            if(a > 1.5f)
+                a = 1.5f;
+            if(a < -6.0f)
+                a = -6.0f;
+            tfv_action act{};
+            act.accel = a;
+            act.lightCmd = (a < -0.5f) ? 1u : 0u;
+            out[k] = act;
+        }
+    }
+    void vt_reset(void*, uint64_t) {}
+    const char* vt_hash(void*) { return "static-cruise"; }
+    int vt_dlc(void*) { return 0; }
+    const tfv_brain_vtable kVT = {sizeof(tfv_brain_vtable), vt_destroy, vt_decide,
+                                  vt_reset,                 vt_hash,    vt_dlc};
+} // namespace
+
+struct VtResult
+{
+    uint64_t digest{0};
+    bool finite{true};
+    bool bounded{true};
+    bool abiOk{false};
+};
+static VtResult vtableRun()
+{
+    VtResult r;
+    tfv_brain_desc desc{};
+    desc.abiVersion = TFV_BRAIN_ABI_VERSION;
+    desc.obsLen = TFV_BRAIN_OBS_LEN;
+    desc.actLayout = TFV_BRAIN_ACT_LAYOUT;
+    desc.structSize = static_cast<uint32_t>(sizeof(tfv_brain_desc));
+    desc.kindName = "static-cruise";
+    r.abiOk = tfv_brain_abi_ok(&desc) && tfv_brain_vtable_ok(&kVT);
+
+    RoadNetwork net;
+    Node n1, n2;
+    n1.id = 1;
+    n1.pos = {0, 0};
+    n2.id = 2;
+    n2.pos = {1000, 0};
+    net.addNode(n1);
+    net.addNode(n2);
+    RoadSegment s;
+    s.id = 0;
+    s.fromNode = 1;
+    s.toNode = 2;
+    s.dir = {1, 0};
+    s.length = 1000.0f;
+    s.speedLimit = 13.9f;
+    s.lanes = 1;
+    net.addSegment(s);
+    std::vector<Vehicle> v(3);
+    for(int i = 0; i < 3; ++i)
+    {
+        v[i].id = static_cast<uint64_t>(i + 1);
+        v[i].segmentId = 0;
+        v[i].position = 0.2f + 0.2f * i;
+        v[i].vel = {4.0f, 0.0f};
+    }
+    Simulation sim(&net);
+    sim.initialize(std::move(v));
+    sim.setBrainForTest(std::make_unique<VtableBrain>(desc, &kVT, nullptr, false));
+
+    VehicleMap snap;
+    const double dt = 0.02;
+    IdmParams idm;
+    for(int t = 0; t < 400; ++t)
+    {
+        sim.update(dt);
+        snap = sim.snapshot();
+        for(const auto& [id, vv] : snap)
+        {
+            (void)id;
+            const float sp = glm::length(vv.vel);
+            if(!std::isfinite(sp) || !std::isfinite(vv.position))
+                r.finite = false;
+            if(sp < -0.01f || sp > idm.v0_cap + 1.0f)
+                r.bounded = false;
+        }
+    }
+    std::vector<uint64_t> ids;
+    for(const auto& [id, vv] : snap)
+    {
+        (void)vv;
+        ids.push_back(id);
+    }
+    std::sort(ids.begin(), ids.end());
+    uint64_t h = 1469598103934665603ULL;
+    auto mix = [&](uint64_t x) {
+        h ^= x;
+        h *= 1099511628211ULL;
+    };
+    for(uint64_t id : ids)
+    {
+        const Vehicle& vv = snap.at(id);
+        mix(id);
+        mix(vv.segmentId);
+        mix(static_cast<uint64_t>(static_cast<int64_t>(std::llround(vv.position * 1e6))));
+        mix(static_cast<uint64_t>(static_cast<int64_t>(std::llround(glm::length(vv.vel) * 1e3))));
+    }
+    r.digest = h;
+    return r;
+}
+
 int main(int argc, char** argv)
 {
     bool printOnly = (argc > 1 && std::strcmp(argv[1], "--print-hash") == 0);
@@ -479,6 +600,11 @@ int main(int argc, char** argv)
     std::printf("nn digest = 0x%016llx (finite=%d bounded=%d overlap=%d maxSpeed=%.3f)\n",
                 (unsigned long long)nn.digest, nn.finite ? 1 : 0, nn.bounded ? 1 : 0,
                 nn.overlap ? 1 : 0, nn.maxSpeed);
+
+    VtResult vtres = vtableRun();
+    std::printf("vtable digest = 0x%016llx (abiOk=%d finite=%d bounded=%d)\n",
+                (unsigned long long)vtres.digest, vtres.abiOk ? 1 : 0, vtres.finite ? 1 : 0,
+                vtres.bounded ? 1 : 0);
 
     if(printOnly)
         return 0;
@@ -605,8 +731,32 @@ int main(int argc, char** argv)
             ++failures;
         }
     }
+    {
+        VtResult vt2 = vtableRun();
+        if(!vtres.abiOk)
+        {
+            std::printf("FAIL: vtable ABI gate rejected a valid descriptor/vtable\n");
+            ++failures;
+        }
+        if(vtres.digest != vt2.digest)
+        {
+            std::printf("FAIL: vtable-brain adapter non-deterministic\n");
+            ++failures;
+        }
+        if(kGoldenVtable != 0ULL && vtres.digest != kGoldenVtable)
+        {
+            std::printf("FAIL: vtable digest 0x%016llx != golden 0x%016llx\n",
+                        (unsigned long long)vtres.digest, (unsigned long long)kGoldenVtable);
+            ++failures;
+        }
+        if(!vtres.finite || !vtres.bounded)
+        {
+            std::printf("FAIL: vtable-brain produced non-finite/unbounded state\n");
+            ++failures;
+        }
+    }
 
     if(failures == 0)
-        std::printf("PASS: golden_trajectory (10 gates)\n");
+        std::printf("PASS: golden_trajectory (11 gates)\n");
     return failures == 0 ? 0 : 1;
 }

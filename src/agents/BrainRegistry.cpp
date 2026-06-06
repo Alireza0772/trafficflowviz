@@ -1,5 +1,6 @@
 #include "agents/BrainRegistry.hpp"
 
+#include "agents/DllBrain.hpp"
 #include "agents/NNBrain.hpp"
 #include "agents/RuleBasedBrain.hpp"
 #include "core/Configuration.hpp"
@@ -53,7 +54,24 @@ namespace tfv
             return std::make_unique<RuleBasedBrain>(idm);
         }
 
-        // Phase-7 follow-on: "dll:...", "python:...", "onnx:..." route through VtableBrain.
+        // External backend: "dll:<path>" or "dll:<path>?<config>" loads a shared library
+        // implementing tfv_brain.h. (Python/ONNX backends will route here similarly.)
+        if(kind.rfind("dll:", 0) == 0)
+        {
+            const std::string rest = kind.substr(4);
+            std::string path = rest, config;
+            const auto q = rest.find('?');
+            if(q != std::string::npos)
+            {
+                path = rest.substr(0, q);
+                config = rest.substr(q + 1);
+            }
+            if(auto b = loadDllBrain(path, config))
+                return b;
+            LOG_WARN("DLL brain load failed; falling back to 'rule'");
+            return std::make_unique<RuleBasedBrain>(idm);
+        }
+
         LOG_WARN("Unknown brain kind '{kind}', falling back to 'rule'", PARAM(kind, kind));
         return std::make_unique<RuleBasedBrain>(idm);
     }

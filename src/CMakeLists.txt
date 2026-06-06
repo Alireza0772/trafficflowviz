@@ -12,6 +12,7 @@ set(TRAFFICFLOWVIZ_SOURCES
     agents/ActionValidator.cpp
     agents/VtableBrain.cpp
     agents/NNBrain.cpp
+    agents/DllBrain.cpp
 
     # Control
     control/LightController.cpp
@@ -85,6 +86,7 @@ target_link_libraries(trafficflowviz_lib PUBLIC
     ${SDL2_LIBRARIES}
     ${SDL2_IMAGE_LIBRARIES}
     ${SDL2_TTF_LIBRARIES}
+    ${CMAKE_DL_LIBS}   # dlopen/dlsym for the DLL brain backend
 )
 
 # Add macOS-specific frameworks
@@ -119,6 +121,12 @@ if(APPLE)
         "-framework Cocoa"
     )
 endif()
+
+# Example external brain plugin (a reference tfv_brain.h implementation), built as a
+# loadable module so it can be dlopen'd via sim.default_brain=dll:<path-to-.so>.
+add_library(tfv_example_brain MODULE ${CMAKE_SOURCE_DIR}/examples/brains/example_brain.c)
+target_include_directories(tfv_example_brain PRIVATE ${CMAKE_SOURCE_DIR}/include)
+set_target_properties(tfv_example_brain PROPERTIES C_VISIBILITY_PRESET hidden)
 
 # Install targets
 install(TARGETS trafficviz

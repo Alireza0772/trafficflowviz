@@ -66,7 +66,13 @@ extern "C"
 
     /* Factory a backend exports as the C symbol "tfv_brain_create". `config` is an
      * opaque key=val string the engine passes through from the kind suffix.
-     * Returns 0 on success; nonzero = creation failed (engine falls back to rule). */
+     * Returns 0 on success; nonzero = creation failed (engine falls back to rule).
+     *
+     * CONTRACT: if create() returns 0 it MUST provide a vtable that passes
+     * tfv_brain_vtable_ok() (including a usable destroy if it allocated state) — the
+     * loader cannot safely call destroy through a sub-minimal/invalid vtable. A brain
+     * that cannot guarantee a valid vtable MUST free any state itself and return
+     * nonzero (and should leave *outSelf NULL). */
     typedef int (*tfv_brain_create_fn)(const char* config, tfv_brain_desc* outDesc,
                                        const tfv_brain_vtable** outVtable, void** outSelf);
 
