@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <glm/glm.hpp>
+#include <unordered_map>
 
 namespace tfv
 {
@@ -122,11 +123,21 @@ namespace tfv
         if(!net || net->segments().empty())
             return;
         const auto& segs = net->segments();
+
+        // Segment ids are identifiers, not vector indices: build an id -> visual
+        // map so each vehicle draws on the correct segment even when ids are
+        // sparse or unordered.
+        std::unordered_map<uint32_t, const RoadVisual*> byId;
+        byId.reserve(segs.size());
+        for(const auto& rv : segs)
+            byId.emplace(rv.id, &rv);
+
         for(const auto& [id, v] : vehicles)
         {
-            if(v.segmentId >= segs.size())
+            auto segIt = byId.find(v.segmentId);
+            if(segIt == byId.end())
                 continue;
-            const auto& s = segs[v.segmentId];
+            const auto& s = *segIt->second;
             float x1 = static_cast<float>(s.x1), y1 = static_cast<float>(s.y1);
             float x2 = static_cast<float>(s.x2), y2 = static_cast<float>(s.y2);
             float dx = x2 - x1, dy = y2 - y1;

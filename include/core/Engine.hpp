@@ -1,16 +1,23 @@
 #ifndef TFV_ENGINE_HPP
 #define TFV_ENGINE_HPP
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <optional>
+#include <filesystem>
 
-#include "Config.hpp"
 #include "alerts/AlertManager.hpp"
+#include "core/Configuration.hpp"
+#include "core/Event.hpp"
+#include "core/Events/KeyEvent.hpp"
+#include "core/Events/WindowEvent.hpp"
 #include "core/LayerStack.hpp"
 #include "core/RoadNetwork.hpp"
 #include "core/Simulation.hpp"
+#include "core/Window.hpp"
 #include "network/LiveFeed.hpp"
 #include "recording/RecordingManager.hpp"
 #include "rendering/Renderer.hpp"
@@ -27,8 +34,12 @@ namespace tfv
     class Engine
     {
       public:
-        Engine(const std::string& title, int w, int h, const std::string& rendererType = "SDL");
+        Engine();
         ~Engine();
+
+        /** Initialize with configuration */
+        bool initialize(int argc = 0, char* argv[] = nullptr, 
+                       const std::optional<std::filesystem::path>& configFile = std::nullopt);
 
         /** Override default CSV path before init(). */
         void setCityInfo(std::string p) { m_cityInfoPath = std::move(p); }
@@ -62,6 +73,7 @@ namespace tfv
 
       private:
         void handleEvents();
+        void onEvent(Event& e);
         void update(double dt);
         void render();
         void processAlert(AlertType type, uint32_t segmentId, const std::string& message);
@@ -72,16 +84,23 @@ namespace tfv
         // window / renderer
         std::string m_title;
         int m_w, m_h;
-        void* m_window{nullptr};
+        std::unique_ptr<Window> m_window;
         std::string m_rendererType;
         Renderer* m_renderer{nullptr};
 
         // timing
         bool m_running{false};
+        bool m_initialized{false};
         double m_t{0.0};
         double m_fpsTimer{0.0};
         int m_frameCount{0};
         int m_fps{0};
+
+        // fixed-timestep accumulator (deterministic simulation stepping)
+        double m_fixedDt{1.0 / 60.0};
+        double m_accumulator{0.0};
+        double m_maxFrameDt{0.25};
+        uint64_t m_tick{0};
 
         // core subsystems
         Simulation m_sim;
@@ -96,9 +115,9 @@ namespace tfv
         std::shared_ptr<HeatmapLayer> m_heatmapLayer;
         std::shared_ptr<ImGuiLayer> m_imguiLayer;
 
-        // data paths
-        std::string m_vehicleInfoPath{TFV_VEHICLE_INFO_PATH};
-        std::string m_cityInfoPath{TFV_CITY_INFO_PATH};
+        // data paths (set by configuration)
+        std::string m_vehicleInfoPath;
+        std::string m_cityInfoPath;
 
         // Feature flags
         bool m_showHeatmap{false};

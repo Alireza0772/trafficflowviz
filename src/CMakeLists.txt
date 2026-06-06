@@ -1,6 +1,7 @@
 set(TRAFFICFLOWVIZ_SOURCES
     # Core component sources
     core/Engine.cpp
+    core/Configuration.cpp
     core/Simulation.cpp
     core/RoadNetwork.cpp
 

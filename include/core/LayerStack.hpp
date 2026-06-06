@@ -2,6 +2,7 @@
 #define TFV_LAYER_STACK_HPP
 
 #include "core/Layer.hpp"
+#include "core/Event.hpp"
 #include <algorithm>
 #include <memory>
 #include <string>
@@ -29,7 +30,7 @@ namespace tfv
         std::shared_ptr<Layer> getLayerByName(const std::string& name);
 
         // Process events through all layers
-        bool onEvent(void* event);
+        bool onEvent(Event& event);
 
         // Update all layers
         void onUpdate(double dt);

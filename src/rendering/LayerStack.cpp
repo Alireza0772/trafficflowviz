@@ -37,7 +37,7 @@ namespace tfv
         return nullptr;
     }
 
-    bool LayerStack::onEvent(void* event)
+    bool LayerStack::onEvent(Event& event)
     {
         // Process events in reverse order (top to bottom)
         for(auto it = m_layers.rbegin(); it != m_layers.rend(); ++it)

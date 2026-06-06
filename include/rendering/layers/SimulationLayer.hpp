@@ -25,7 +25,7 @@ namespace tfv
         // Layer interface implementation
         virtual void onAttach() override;
         virtual void onDetach() override;
-        virtual bool onEvent(void* event) override;
+        virtual bool onEvent(Event& event) override;
         virtual void onUpdate(double dt) override;
         virtual void onRender() override;
         virtual void onImGuiRender() override;
@@ -41,11 +41,19 @@ namespace tfv
         const RoadNetwork* getRoadNetwork() const { return m_simulation->getRoadNetwork(); }
 
       private:
+        // drawable-pixels / window-points (1.0 except on hi-DPI displays)
+        float framebufferScale() const;
+
         Renderer* m_renderer;
         Simulation* m_simulation;
 
         // Scene renderer for visualization
         std::unique_ptr<SceneRenderer> m_sceneRenderer;
+        
+        // Mouse interaction state
+        bool m_isDragging = false;
+        float m_lastMouseX = 0.0f;
+        float m_lastMouseY = 0.0f;
     };
 
 } // namespace tfv

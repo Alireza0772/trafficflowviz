@@ -1,0 +1,111 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Default Config",
+      "description": "Default build using system dependencies",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "TFV_BUILD_PYTHON": "ON",
+        "TFV_USE_SANITIZERS": "OFF",
+        "TFV_ENABLE_DOCS": "OFF",
+        "TFV_ENABLE_TESTING": "ON",
+        "TFV_USE_VCPKG": "OFF"
+      }
+    },
+    {
+      "name": "debug",
+      "displayName": "Debug Build",
+      "description": "Debug build with sanitizers",
+      "inherits": "default",
+      "binaryDir": "${sourceDir}/build-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "TFV_USE_SANITIZERS": "ON"
+      }
+    },
+    {
+      "name": "vcpkg",
+      "displayName": "vcpkg Dependencies",
+      "description": "Build using vcpkg for dependency management",
+      "inherits": "default",
+      "binaryDir": "${sourceDir}/build-vcpkg",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "TFV_USE_VCPKG": "ON"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "Release Build",
+      "description": "Optimized release build",
+      "inherits": "default",
+      "binaryDir": "${sourceDir}/build-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "TFV_USE_SANITIZERS": "OFF",
+        "TFV_ENABLE_DOCS": "ON"
+      }
+    },
+    {
+      "name": "ci",
+      "displayName": "CI Build", 
+      "description": "Build configuration for CI/CD",
+      "inherits": "default",
+      "binaryDir": "${sourceDir}/build-ci",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "TFV_BUILD_PYTHON": "ON",
+        "TFV_USE_SANITIZERS": "OFF",
+        "TFV_ENABLE_TESTING": "ON",
+        "TFV_ENABLE_DOCS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default",
+      "displayName": "Default Build"
+    },
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "displayName": "Debug Build"
+    },
+    {
+      "name": "vcpkg",
+      "configurePreset": "vcpkg",
+      "displayName": "vcpkg Build"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "displayName": "Release Build"
+    },
+    {
+      "name": "ci",
+      "configurePreset": "ci",
+      "displayName": "CI Build"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default",
+      "displayName": "Default Tests"
+    },
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "displayName": "Debug Tests"
+    }
+  ]
+}

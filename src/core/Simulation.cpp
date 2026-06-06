@@ -1,9 +1,11 @@
 #include "core/Simulation.hpp"
+#include "core/Configuration.hpp"
 #include "utils/LoggingManager.hpp"
 #include <algorithm>
 #include <data/CSVLoader.hpp>
 #include <glm/glm.hpp>
 #include <iostream>
+#include <random>
 #include <unordered_set>
 
 namespace tfv
@@ -21,6 +23,11 @@ namespace tfv
                                 const std::filesystem::path& vehicleInformationPath)
     {
         std::scoped_lock lock(m_mtx);
+
+        // Seed the deterministic RNG stream from the configured master seed so
+        // routing choices are reproducible for a given seed (statistical tier).
+        m_rng.seed(static_cast<std::mt19937::result_type>(TFV_CONFIG().getMasterSeed()));
+
         // Clear previous data
         m_vehicles.clear();
         m_segmentStats.clear();
@@ -107,13 +114,22 @@ namespace tfv
                     const auto* fromNode = m_roadNetwork->getNode(segment->toNode);
                     if(fromNode && !fromNode->outgoing.empty())
                     {
-                        // Choose a random outgoing segment
-                        size_t nextIdx = rand() % fromNode->outgoing.size();
-                        uint32_t nextSegmentId = fromNode->outgoing[nextIdx];
+                        // Choose an outgoing segment via the seeded RNG stream
+                        // (deterministic given the master seed; replaces rand()).
+                        std::uniform_int_distribution<size_t> pick(
+                            0, fromNode->outgoing.size() - 1);
+                        uint32_t nextSegmentId = fromNode->outgoing[pick(m_rng)];
 
-                        // Update the vehicle's segment and reset position
+                        // Maintain per-segment vehicle counts on hand-off so the
+                        // congestion model tracks actual occupancy as vehicles move.
+                        if(segment->vehicleCount > 0)
+                            segment->vehicleCount--;
+                        if(auto* nextSeg = m_roadNetwork->getSegment(nextSegmentId))
+                            nextSeg->vehicleCount++;
+
+                        // Update the vehicle's segment and carry over extra distance
                         v.segmentId = nextSegmentId;
-                        v.position = v.position - 1.f; // Carry over extra distance
+                        v.position = v.position - 1.f;
                     }
                     else
                     {

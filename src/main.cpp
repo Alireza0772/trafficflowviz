@@ -3,10 +3,16 @@
 
 int main(int argc, char* argv[])
 {
-    // Create the engine with default SDL renderer
-    tfv::Engine engine("Traffic Flow Visualization", 1280, 720, "SDL");
+    // Create the engine
+    tfv::Engine engine;
 
-    // Initialize the engine and run the simulation
+    // Initialize the engine with configuration
+    if (!engine.initialize(argc, argv)) {
+        std::cerr << "Failed to initialize TrafficFlowViz engine" << std::endl;
+        return 1;
+    }
+
+    // Run the simulation
     engine.run();
 
     return 0;

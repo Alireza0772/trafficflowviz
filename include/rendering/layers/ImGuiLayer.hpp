@@ -28,7 +28,7 @@ namespace tfv
         // Layer interface implementation
         virtual void onAttach() override;
         virtual void onDetach() override;
-        virtual bool onEvent(void* event) override;
+        virtual bool onEvent(Event& event) override;
         virtual void onUpdate(double dt) override;
         virtual void onRender() override;
         virtual void onImGuiRender() override;

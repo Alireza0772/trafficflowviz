@@ -1,4 +1,5 @@
 #include "rendering/layers/ImGuiLayer.hpp"
+#include "utils/LoggingManager.hpp"
 #include <imgui.h>
 #include <imgui_impl_sdl2.h>
 #include <imgui_impl_sdlrenderer2.h>
@@ -31,6 +32,25 @@ namespace tfv
         // Setup Dear ImGui style
         ImGui::StyleColorsDark();
 
+        // Hi-DPI crisp fonts: rasterize the atlas at the framebuffer scale and lay
+        // it out at 1/scale. Since onImGuiRender render-scales ImGui by the same
+        // framebuffer scale, text ends up sharp instead of an upscaled bitmap.
+        {
+            int ww = 0, wh = 0, rw = 0, rh = 0;
+            SDL_GetWindowSize(m_window, &ww, &wh);
+            SDL_GetRendererOutputSize(m_renderer, &rw, &rh);
+            float dpiScale = (ww > 0) ? static_cast<float>(rw) / static_cast<float>(ww) : 1.0f;
+            if(dpiScale < 1.0f)
+                dpiScale = 1.0f;
+
+            const float baseFontPx = 16.0f;
+            ImFont* font = io.Fonts->AddFontFromFileTTF(
+                "/System/Library/Fonts/Supplemental/Arial.ttf", baseFontPx * dpiScale);
+            if(!font)
+                io.Fonts->AddFontDefault(); // fall back to the embedded font
+            io.FontGlobalScale = 1.0f / dpiScale;
+        }
+
         // Setup Platform/Renderer backends
         ImGui_ImplSDL2_InitForSDLRenderer(m_window, m_renderer);
         ImGui_ImplSDLRenderer2_Init(m_renderer);
@@ -50,19 +70,13 @@ namespace tfv
         }
     }
 
-    bool ImGuiLayer::onEvent(void* event)
+    bool ImGuiLayer::onEvent(Event& event)
     {
-        if(!m_initialized || !event)
-            return false;
-
-        SDL_Event* sdlEvent = static_cast<SDL_Event*>(event);
-        ImGui_ImplSDL2_ProcessEvent(sdlEvent);
-
-        // Check if ImGui wants to capture the event
-        ImGuiIO& io = ImGui::GetIO();
-        bool captured = io.WantCaptureMouse || io.WantCaptureKeyboard;
-
-        return captured;
+        // Raw SDL events are fed to ImGui (and consumed when ImGui wants the
+        // mouse/keyboard) at the window event-pump level (SDLWindow::pollEvents),
+        // so there is nothing to do per-layer here.
+        (void)event;
+        return false;
     }
 
     void ImGuiLayer::onUpdate(double dt)
@@ -101,9 +115,16 @@ namespace tfv
         // Render status bar at the bottom
         renderStatusBar();
 
-        // Render ImGui
+        // Render ImGui. On hi-DPI (Retina) displays the SDL renderer output is the
+        // full pixel framebuffer while ImGui lays out in logical points, so scale
+        // the renderer by the framebuffer scale before submitting ImGui draw data
+        // (otherwise the whole UI is drawn into the top-left quarter at half size).
+        // Reset to 1.0 afterwards so the scene keeps rendering at native pixels.
         ImGui::Render();
+        ImGuiIO& io = ImGui::GetIO();
+        SDL_RenderSetScale(m_renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), m_renderer);
+        SDL_RenderSetScale(m_renderer, 1.0f, 1.0f);
     }
 
     void ImGuiLayer::renderDockspace()

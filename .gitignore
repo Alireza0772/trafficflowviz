@@ -6,7 +6,7 @@ build_xcode/
 *.xcodeproj
 *.xcworkspace
 xcuserdata/
-.vscode/
+# .vscode/
 .visualstudio/
 fix_includes.sh
 update_includes.sh

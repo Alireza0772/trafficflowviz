@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.25)
 project(TrafficFlowViz VERSION 1.0.0 LANGUAGES CXX)
 
 # Set C++ standard
@@ -6,76 +6,110 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Enable FetchContent for dependency management
+include(FetchContent)
+
 # Define output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
-# Set build type
+# Build options
+option(TFV_BUILD_PYTHON "Build Python bindings" ON)
+option(TFV_USE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
+option(TFV_ENABLE_DOCS "Build documentation with Doxygen" OFF)
+option(TFV_ENABLE_TESTING "Build unit tests" ON)
+option(TFV_USE_VCPKG "Use vcpkg for dependency management" OFF)
+
+# Set default build type
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "Python bindings: ${TFV_BUILD_PYTHON}")
+message(STATUS "Sanitizers: ${TFV_USE_SANITIZERS}")
+message(STATUS "Documentation: ${TFV_ENABLE_DOCS}")
+message(STATUS "Testing: ${TFV_ENABLE_TESTING}")
 
-
-# Find required packages
-find_package(SDL2 REQUIRED)
-
-# Add ImGui sources
-set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui)
-if(NOT EXISTS "${IMGUI_DIR}")
-  message(STATUS "ImGui not found, will download it...")
-  # Clone the ImGui repository
-  execute_process(
-    COMMAND git clone --depth 1 https://github.com/ocornut/imgui.git ${IMGUI_DIR}
-    RESULT_VARIABLE GIT_RESULT
-  )
-  if(NOT GIT_RESULT EQUAL 0)
-    message(FATAL_ERROR "Failed to clone ImGui repository. Please install git or download ImGui manually.")
-  endif()
+# Compiler-specific options
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    # Modern C++ warnings
+    add_compile_options(-Wall -Wextra -Wpedantic -Wno-unused-parameter)
+    
+    # Optimization flags
+    if(CMAKE_BUILD_TYPE STREQUAL "Release")
+        add_compile_options(-O3 -DNDEBUG -march=native)
+    elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        add_compile_options(-O0 -g -DDEBUG)
+    endif()
+    
+    # Sanitizers for debug builds
+    if(TFV_USE_SANITIZERS AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+        add_compile_options(-fsanitize=address -fsanitize=undefined)
+        add_link_options(-fsanitize=address -fsanitize=undefined)
+    endif()
 endif()
 
-# For SDL2_image and SDL2_ttf on macOS, point directly to the libraries
-if(APPLE)
-  set(SDL2_IMAGE_LIBRARIES "/opt/homebrew/lib/libSDL2_image.dylib") 
-  set(SDL2_TTF_LIBRARIES "/opt/homebrew/lib/libSDL2_ttf.dylib")
-  set(SDL2_IMAGE_INCLUDE_DIRS "/opt/homebrew/include/SDL2")
-  set(SDL2_TTF_INCLUDE_DIRS "/opt/homebrew/include/SDL2")
-  
-  if(NOT EXISTS "${SDL2_IMAGE_LIBRARIES}")
-    message(FATAL_ERROR "SDL2_image library not found at ${SDL2_IMAGE_LIBRARIES}. Please install SDL2_image.")
-  else()
-    message(STATUS "Found SDL2_image: ${SDL2_IMAGE_LIBRARIES}")
-  endif()
-  
-  if(NOT EXISTS "${SDL2_TTF_LIBRARIES}")
-    message(FATAL_ERROR "SDL2_ttf library not found at ${SDL2_TTF_LIBRARIES}. Please install SDL2_ttf.")
-  else()
-    message(STATUS "Found SDL2_ttf: ${SDL2_TTF_LIBRARIES}")
-  endif()
+
+# Dependency management
+if(TFV_USE_VCPKG)
+    # Modern find_package approach with vcpkg
+    find_package(SDL2 CONFIG REQUIRED)
+    find_package(SDL2_image CONFIG REQUIRED)
+    find_package(SDL2_ttf CONFIG REQUIRED)
+    find_package(glm CONFIG REQUIRED)
+    
+    set(SDL2_LIBRARIES SDL2::SDL2 SDL2::SDL2main)
+    set(SDL2_IMAGE_LIBRARIES SDL2_image::SDL2_image)
+    set(SDL2_TTF_LIBRARIES SDL2_ttf::SDL2_ttf)
+    set(GLM_INCLUDE_DIRS "") # glm is header-only and automatically handled by target
 else()
-  # Use find_package for other platforms
-  find_package(SDL2_image REQUIRED)
-  find_package(SDL2_ttf REQUIRED)
+    # Traditional find_package approach
+    find_package(SDL2 REQUIRED)
+    
+    # Platform-specific SDL2 extensions
+    if(APPLE)
+        set(SDL2_IMAGE_LIBRARIES "/opt/homebrew/lib/libSDL2_image.dylib") 
+        set(SDL2_TTF_LIBRARIES "/opt/homebrew/lib/libSDL2_ttf.dylib")
+        set(SDL2_IMAGE_INCLUDE_DIRS "/opt/homebrew/include/SDL2")
+        set(SDL2_TTF_INCLUDE_DIRS "/opt/homebrew/include/SDL2")
+        set(GLM_INCLUDE_DIRS "/opt/homebrew/include")
+        
+        # Verify libraries exist
+        foreach(lib ${SDL2_IMAGE_LIBRARIES} ${SDL2_TTF_LIBRARIES})
+            if(NOT EXISTS "${lib}")
+                message(FATAL_ERROR "Required library not found: ${lib}")
+            endif()
+        endforeach()
+        
+        if(NOT EXISTS "${GLM_INCLUDE_DIRS}/glm/glm.hpp")
+            message(FATAL_ERROR "GLM library not found at ${GLM_INCLUDE_DIRS}")
+        endif()
+    else()
+        # Use find_package for other platforms
+        find_package(SDL2_image REQUIRED)
+        find_package(SDL2_ttf REQUIRED)
+        find_package(glm REQUIRED)
+        set(GLM_INCLUDE_DIRS ${GLM_INCLUDE_DIR})
+    endif()
 endif()
 
-# Set GLM include path directly since find_package isn't working
-set(GLM_INCLUDE_DIRS "/opt/homebrew/include")
-if(NOT EXISTS "${GLM_INCLUDE_DIRS}/glm/glm.hpp")
-  message(FATAL_ERROR "GLM library not found at ${GLM_INCLUDE_DIRS}. Please install GLM.")
-else()
-  message(STATUS "Found GLM: ${GLM_INCLUDE_DIRS}")
-endif()
-
-# Configure Config.hpp with data paths
-set(TFV_VEHICLE_INFO_PATH "../../data/vehicles/vehicles.csv")
-set(TFV_CITY_INFO_PATH "../../data/roads/roads_complex.csv")
-configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/Config.hpp.in
-    ${CMAKE_CURRENT_BINARY_DIR}/include/Config.hpp
-    @ONLY
+# Fetch ImGui using FetchContent (docking branch for advanced features)
+FetchContent_Declare(
+  imgui
+  GIT_REPOSITORY https://github.com/ocornut/imgui.git
+  GIT_TAG        docking  # Use docking branch for advanced features
+  GIT_SHALLOW    TRUE
 )
-include_directories(${CMAKE_CURRENT_BINARY_DIR}/include)
+
+FetchContent_MakeAvailable(imgui)
+
+# Set ImGui directory for compatibility
+set(IMGUI_DIR ${imgui_SOURCE_DIR})
+
+
+# Note: Configuration is now handled at runtime via Configuration class
+# No need for compile-time configuration anymore
 
 # Set include paths
 include_directories(
@@ -96,7 +130,28 @@ endforeach()
 
 # Add subdirectories
 add_subdirectory(src)
-add_subdirectory(bindings)
+
+# Conditional Python bindings
+if(TFV_BUILD_PYTHON)
+    add_subdirectory(bindings)
+endif()
+
+# Optional testing
+if(TFV_ENABLE_TESTING)
+    enable_testing()
+    # add_subdirectory(tests) # TODO: Create tests directory
+endif()
+
+# Optional documentation
+if(TFV_ENABLE_DOCS)
+    find_package(Doxygen)
+    if(DOXYGEN_FOUND)
+        # TODO: Configure Doxygen
+        message(STATUS "Doxygen found - documentation can be built")
+    else()
+        message(WARNING "Doxygen not found - documentation cannot be built")
+    endif()
+endif()
 
 # Set installation paths
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data/

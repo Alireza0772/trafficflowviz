@@ -3,6 +3,7 @@
 
 #include <functional>
 #include <mutex>
+#include <random>
 
 #include "core/RoadNetwork.hpp"
 #include "core/TrafficEntity.hpp"
@@ -83,6 +84,9 @@ namespace tfv
         // Update frequency (don't update every frame)
         double m_statUpdateInterval{1.0}; // seconds
         double m_timeSinceLastUpdate{0.0};
+
+        // Seeded RNG stream for deterministic routing (replaces global rand()).
+        std::mt19937 m_rng;
     };
 
 } // namespace tfv

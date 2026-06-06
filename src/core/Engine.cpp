@@ -19,8 +19,7 @@
 namespace tfv
 {
 
-    Engine::Engine(const std::string& title, int w, int h, const std::string& rendererType)
-        : m_title(title), m_w(w), m_h(h), m_rendererType(rendererType)
+    Engine::Engine()
     {
     }
 
@@ -39,50 +38,68 @@ namespace tfv
         if(m_renderer)
             delete m_renderer;
 
-        // Clean up the SDL window if using SDL
-        if(m_window && m_rendererType == "SDL")
-            SDL_DestroyWindow(static_cast<SDL_Window*>(m_window));
+        // Window cleanup is handled by the Window abstraction's destructor
+        if(m_window)
+            m_window->shutdown();
+    }
 
-        // Quit SDL if using SDL renderer
-        if(m_rendererType == "SDL")
-            SDL_Quit();
+    bool Engine::initialize(int argc, char* argv[], 
+                           const std::optional<std::filesystem::path>& configFile)
+    {
+        // Initialize configuration system first
+        if (!TFV_CONFIG().initialize(configFile, argc, argv)) {
+            LOG_ERROR("Failed to initialize configuration system");
+            return false;
+        }
+
+        // Set up application parameters from configuration
+        m_title = TFV_CONFIG().getApplicationTitle();
+        m_w = TFV_CONFIG().getWindowWidth();
+        m_h = TFV_CONFIG().getWindowHeight();
+        m_rendererType = TFV_CONFIG().getRendererType();
+
+        // Set data paths from configuration
+        m_vehicleInfoPath = TFV_CONFIG().getVehicleDataPath().string();
+        m_cityInfoPath = TFV_CONFIG().getCityDataPath().string();
+
+        // Set feature flags from configuration
+        m_showHeatmap = TFV_CONFIG().isHeatmapEnabled();
+        m_alertsEnabled = TFV_CONFIG().isAlertsEnabled();
+        m_recordingEnabled = TFV_CONFIG().isRecordingEnabled();
+
+        // Fixed simulation timestep (deterministic stepping, decoupled from FPS)
+        float ts = TFV_CONFIG().getSimulationTimeStep();
+        if(ts > 0.0f)
+            m_fixedDt = static_cast<double>(ts);
+
+        return init();
     }
 
     bool Engine::init()
     {
-        // Initialize SDL for the SDL renderer
-        if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
+        if(m_initialized)
+            return true; // idempotent: safe whether called via initialize() or run()
+
+        // Create window using the abstraction
+        WindowProps props;
+        props.title = m_title;
+        props.width = m_w;
+        props.height = m_h;
+        
+        m_window = Window::create(props);
+        if(!m_window || !m_window->initialize(props))
         {
-            LOG_ERROR("SDL init failed: {error}", PARAM(error, SDL_GetError()));
+            LOG_ERROR("Window creation failed");
             return false;
         }
-
-        // Create window with no border, resizable, and with a specific size also without top client
-        // area to make it look like a native window
-        m_window = SDL_CreateWindow(m_title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                    m_w, m_h, SDL_WINDOW_BORDERLESS | SDL_WINDOW_RESIZABLE);
-
-        if(!m_window)
-        {
-            LOG_ERROR("Window creation failed: {error}", PARAM(error, SDL_GetError()));
-            return false;
-        }
-        LOG_INFO("Window created successfully");
-        // Set window icon
-        SDL_Surface* icon = SDL_LoadBMP("assets/icon.bmp");
-
-        if(icon)
-        {
-            SDL_SetWindowIcon(static_cast<SDL_Window*>(m_window), icon);
-            SDL_FreeSurface(icon);
-        }
-        else
-        {
-            LOG_ERROR("Failed to load window icon: {error}", PARAM(error, SDL_GetError()));
-        }
+        
+        // Set up event callback for proper event handling
+        m_window->setEventCallback([this](Event& e) {
+            this->onEvent(e);
+        });
 
         // Create the renderer using factory method
-        m_renderer = Renderer::create(m_rendererType, m_window).release();
+        m_renderer = Renderer::create(m_rendererType, m_window->getNativeWindow()).release();
         if(!m_renderer)
         {
             LOG_ERROR("Renderer creation failed");
@@ -117,7 +134,7 @@ namespace tfv
 
         // Initialize recording manager
         m_recordingManager = std::make_unique<RecordingManager>(m_renderer);
-        m_recordingManager->setStatusCallback([this](const std::string& msg)
+        m_recordingManager->setStatusCallback([](const std::string& msg)
                                               { LOG_INFO("[Recording] {msg}", PARAM(msg, msg)); });
 
         // Create and initialize layers
@@ -137,7 +154,7 @@ namespace tfv
         {
             void* nativeRenderer = m_renderer->getNativeRenderer();
             m_imguiLayer =
-                std::make_shared<ImGuiLayer>(static_cast<SDL_Window*>(m_window),
+                std::make_shared<ImGuiLayer>(static_cast<SDL_Window*>(m_window->getNativeWindow()),
                                              static_cast<SDL_Renderer*>(nativeRenderer), &m_sim);
 
             m_imguiLayer->setSimulationLayer(m_simulationLayer.get());
@@ -149,6 +166,7 @@ namespace tfv
             m_imguiLayer->setEnabled(m_imguiEnabled);
         }
 
+        m_initialized = true;
         return true;
     }
 
@@ -184,95 +202,92 @@ namespace tfv
 
     void Engine::handleEvents()
     {
-        // For now, keep SDL event handling since we're focusing on rendering API abstraction
-        SDL_Event e;
-        while(SDL_PollEvent(&e))
+        // Use window abstraction to poll events
+        m_window->pollEvents();
+    }
+
+    void Engine::onEvent(Event& e)
+    {
+        // Process events through the layer stack first
+        if(m_layerStack.onEvent(e))
         {
-            // Process events through the layer stack first
-            if(m_layerStack.onEvent(&e))
-            {
-                // Event was handled by a layer
-                continue;
-            }
+            // Event was handled by a layer
+            return;
+        }
 
-            // Handle application-level events
-            if(e.type == SDL_QUIT)
+        // Handle application-level events
+        if(e.getEventType() == EventType::WindowClose)
+        {
+            m_running = false;
+            return;
+        }
+
+        if(e.getEventType() == EventType::KeyPressed)
+        {
+            KeyPressedEvent& keyEvent = static_cast<KeyPressedEvent&>(e);
+            switch(keyEvent.getKeyCode())
+            {
+            case SDLK_ESCAPE:
                 m_running = false;
+                break;
 
-            if(e.type == SDL_KEYDOWN)
-            {
-                switch(e.key.keysym.sym)
+            // Feature toggles
+            case SDLK_h: // Toggle heatmap
+                toggleHeatmap(!m_showHeatmap);
+                break;
+            case SDLK_l: // Toggle live feed
+                toggleLiveFeed(!m_liveFeedEnabled);
+                break;
+            case SDLK_a: // Toggle alerts
+                toggleAlerts(!m_alertsEnabled);
+                break;
+            case SDLK_r: // Toggle recording
+                toggleRecording(!m_recordingEnabled);
+                break;
+            case SDLK_i: // Toggle ImGui
+                toggleImGui(!m_imguiEnabled);
+                break;
+            case SDLK_g: // Toggle anti-aliasing
+                toggleAntiAliasing(!m_antiAliasingEnabled);
+                break;
+            case SDLK_k: // Toggle keybindings window
+                toggleKeybindingsWindow(!m_showKeybindings);
+                break;
+
+            // Export functions
+            case SDLK_s: // Save screenshot
+                if(m_recordingManager)
                 {
-                case SDLK_ESCAPE:
-                    m_running = false;
-                    break;
-
-                // Feature toggles
-                case SDLK_h: // Toggle heatmap
-                    toggleHeatmap(!m_showHeatmap);
-                    break;
-                case SDLK_l: // Toggle live feed
-                    toggleLiveFeed(!m_liveFeedEnabled);
-                    break;
-                case SDLK_a: // Toggle alerts
-                    toggleAlerts(!m_alertsEnabled);
-                    break;
-                case SDLK_r: // Toggle recording
-                    toggleRecording(!m_recordingEnabled);
-                    break;
-                case SDLK_i: // Toggle ImGui
-                    toggleImGui(!m_imguiEnabled);
-                    break;
-                case SDLK_g: // Toggle anti-aliasing
-                    toggleAntiAliasing(!m_antiAliasingEnabled);
-                    break;
-                case SDLK_k: // Toggle keybindings window
-                    toggleKeybindingsWindow(!m_showKeybindings);
-                    break;
-
-                // Export functions
-                case SDLK_s: // Save screenshot
-                    if(m_recordingManager)
-                    {
-                        m_recordingManager->captureScreenshot(
-                            "trafficviz_" + std::to_string(static_cast<long>(time(nullptr))) +
-                            ".png");
-                    }
-                    break;
-
-                default:
-                    break;
+                    m_recordingManager->captureScreenshot(
+                        "trafficviz_" + std::to_string(static_cast<long>(time(nullptr))) +
+                        ".png");
                 }
+                break;
+
+            default:
+                break;
             }
         }
     }
 
     void Engine::update(double dt)
     {
-        // Update simulation
-        m_sim.update(dt);
-
-        // Process live data if enabled
-        if(m_liveFeedEnabled && m_liveFeed)
+        // Fixed-timestep accumulator: advance the simulation in deterministic
+        // quanta (m_fixedDt) independent of the render frame rate. dt is clamped
+        // to m_maxFrameDt to avoid the "spiral of death" if a frame stalls
+        // (e.g. paused under a debugger or a slow first frame).
+        m_accumulator += (dt < m_maxFrameDt ? dt : m_maxFrameDt);
+        while(m_accumulator >= m_fixedDt)
         {
-            // Note: These should be implemented in LiveFeed class if needed
-            // For now, removed these calls since they don't exist
-            // m_liveFeed->update();
-            // const auto& updates = m_liveFeed->getVehicleUpdates();
-            // for(const auto& update : updates)
-            // {
-            //     m_sim.updateVehicle(update);
-            // }
+            m_sim.update(m_fixedDt);
+            m_accumulator -= m_fixedDt;
+            ++m_tick;
         }
 
-        // Process alerts if enabled
-        if(m_alertsEnabled && m_alertManager)
-        {
-            // This should be implemented in AlertManager if needed
-            // m_alertManager->update(dt);
-        }
+        // LiveFeed ingest (Phase 6) and AlertManager update hooks are not yet
+        // implemented; intentionally no-ops here.
 
-        // Update all layers
+        // Update all layers once per rendered frame (render-side animation only).
         m_layerStack.onUpdate(dt);
 
         m_t += dt;
