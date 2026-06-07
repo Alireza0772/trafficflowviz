@@ -7,6 +7,13 @@
 
 namespace tfv
 {
+    // Per-vertex-colored vertex for fillGeometry (position in framebuffer px, RGBA).
+    struct RVertex
+    {
+        float x, y;
+        uint8_t r, g, b, a;
+    };
+
     // Abstract rendering interface, templated on the backend type and window type
     class Renderer
     {
@@ -37,6 +44,24 @@ namespace tfv
         virtual void drawRect(int x, int y, int w, int h) = 0;
         virtual void fillRect(int x, int y, int w, int h) = 0;
         virtual void drawText(const std::string& text, int x, int y) = 0;
+
+        // Filled, per-vertex-colored triangle soup (idx into verts). Additive: the
+        // default is a no-op, so backends without geometry support still compile/link.
+        virtual void fillGeometry(const RVertex* verts, int vcount, const int* idx, int icount)
+        {
+            (void)verts;
+            (void)vcount;
+            (void)idx;
+            (void)icount;
+        }
+
+        // Convenience: a filled convex quad a->b->c->d (two triangles, per-vertex color).
+        void fillQuad(const RVertex& a, const RVertex& b, const RVertex& c, const RVertex& d)
+        {
+            const RVertex v[4] = {a, b, c, d};
+            const int idx[6] = {0, 1, 2, 0, 2, 3};
+            fillGeometry(v, 4, idx, 6);
+        }
 
         // Control anti-aliasing for renderers that support it
         virtual void setAntiAliasing(bool enable) = 0;

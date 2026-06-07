@@ -24,6 +24,7 @@ namespace tfv
         void drawRect(int x, int y, int w, int h) override;
         void fillRect(int x, int y, int w, int h) override;
         void drawText(const std::string& text, int x, int y) override;
+        void fillGeometry(const RVertex* verts, int vcount, const int* idx, int icount) override;
 
         // Control anti-aliasing for renderers that support it
         void setAntiAliasing(bool enable) override;

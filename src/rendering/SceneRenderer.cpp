@@ -7,6 +7,29 @@
 
 namespace tfv
 {
+    namespace
+    {
+        struct RGB
+        {
+            uint8_t r, g, b;
+        };
+        inline RGB lerpRGB(RGB a, RGB b, float u)
+        {
+            auto L = [&](uint8_t x, uint8_t y) {
+                return static_cast<uint8_t>(x + std::lround((static_cast<int>(y) - x) * u));
+            };
+            return {L(a.r, b.r), L(a.g, b.g), L(a.b, b.b)};
+        }
+        // Speed -> green->amber->red gradient, normalized by the desired-speed cap.
+        inline RGB speedColor(float speed, float v0)
+        {
+            float t = speed / (v0 > 0.1f ? v0 : 13.9f);
+            t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+            const RGB lo{46, 204, 113}, mid{241, 196, 15}, hi{231, 76, 60};
+            return t < 0.5f ? lerpRGB(lo, mid, t / 0.5f) : lerpRGB(mid, hi, (t - 0.5f) / 0.5f);
+        }
+    } // namespace
+
     void SceneRenderer::draw(const VehicleMap& vehicles)
     {
         RoadRenderer roadR(m_r, m_panX, m_panY, m_scale, m_antiAliasing);
@@ -48,14 +71,25 @@ namespace tfv
                 const int sx = static_cast<int>(wx * m_scale) + m_panX;
                 const int sy = static_cast<int>(wy * m_scale) + m_panY;
 
-                switch(m_net->approachColor(segId))
-                {
-                case LightColor::Green: m_r->setColor(40, 220, 40, 255); break;
-                case LightColor::Amber: m_r->setColor(240, 200, 40, 255); break;
-                case LightColor::Red:   m_r->setColor(230, 40, 40, 255); break;
-                }
-                const int sz = std::max(6, static_cast<int>(6 * m_scale));
-                m_r->fillRect(sx - sz / 2, sy - sz / 2, sz, sz);
+                // Three-lamp signal head: red / amber / green stacked; the active lamp
+                // is bright, the others dimmed, inside a dark housing.
+                const LightColor cur = m_net->approachColor(segId);
+                const int lamp = std::max(3, static_cast<int>(2.5f * m_scale));
+                const int gap = std::max(1, lamp / 3);
+                const int totalH = lamp * 3 + gap * 2;
+                m_r->setColor(18, 18, 22, 255);
+                m_r->fillRect(sx - lamp / 2 - 1, sy - totalH / 2 - 1, lamp + 2, totalH + 2);
+                auto lampAt = [&](int row, uint8_t lr, uint8_t lg, uint8_t lb, bool on) {
+                    const int ly = sy - totalH / 2 + row * (lamp + gap);
+                    if(on)
+                        m_r->setColor(lr, lg, lb, 255);
+                    else
+                        m_r->setColor(lr / 5, lg / 5, lb / 5, 255);
+                    m_r->fillRect(sx - lamp / 2, ly, lamp, lamp);
+                };
+                lampAt(0, 235, 45, 45, cur == LightColor::Red);
+                lampAt(1, 240, 200, 45, cur == LightColor::Amber);
+                lampAt(2, 45, 220, 45, cur == LightColor::Green);
             }
         }
     }
@@ -142,16 +176,22 @@ namespace tfv
             auto b1 = toScreen(x1 - nx * half, y1 - ny * half);
             auto b2 = toScreen(x2 - nx * half, y2 - ny * half);
 
-            // Set color for roads
-            m_r->setColor(200, 200, 200, 255);
+            // Asphalt ribbon (filled quad a1 -> a2 -> b2 -> b1).
+            auto V = [](std::pair<int, int> p) {
+                return RVertex{static_cast<float>(p.first), static_cast<float>(p.second),
+                               52, 56, 64, 255};
+            };
+            m_r->fillQuad(V(a1), V(a2), V(b2), V(b1));
 
-            // Draw the road edges
-            m_r->drawLine(a1.first, a1.second, a2.first, a2.second, 2);
-            m_r->drawLine(b1.first, b1.second, b2.first, b2.second, 2);
+            // Solid lane-edge lines.
+            m_r->setColor(96, 100, 110, 255);
+            m_r->drawLine(a1.first, a1.second, a2.first, a2.second, 1);
+            m_r->drawLine(b1.first, b1.second, b2.first, b2.second, 1);
 
-            // Draw center line
-            m_r->setColor(140, 140, 140, 255);
-            drawDashedLine(a1.first, a1.second, b1.first, b1.second);
+            // Dashed centerline ALONG the road (the old code dashed across it).
+            auto cs = toScreen(x1, y1), ce = toScreen(x2, y2);
+            m_r->setColor(210, 200, 120, 200);
+            drawDashedLine(cs.first, cs.second, ce.first, ce.second);
         }
     }
 
@@ -195,48 +235,48 @@ namespace tfv
     void VehicleRenderer::draw(const VehicleMap& vehicles, const RoadNetwork* const net)
     {
         (void)net; // positioning now comes from Vehicle.worldPos/heading (computed by Simulation)
+        const float v0 = 13.9f; // desired-speed cap for the speed gradient
         for(const auto& entry : vehicles)
         {
             const Vehicle& v = entry.second;
             const float ux = std::cos(v.heading), uy = std::sin(v.heading);
-            int sx = static_cast<int>(v.worldPos.x * m_scale) + m_panX;
-            int sy = static_cast<int>(v.worldPos.y * m_scale) + m_panY;
+            const float nx = -uy, ny = ux; // lateral
+            const float sx = v.worldPos.x * m_scale + static_cast<float>(m_panX);
+            const float sy = v.worldPos.y * m_scale + static_cast<float>(m_panY);
 
-            // Lights: red when braking, amber while signalling a lane change, else green.
-            if(v.lightBits & light::BRAKE)
-                m_r->setColor(235, 70, 50, 255);
-            else if(v.lightBits & (light::LEFT | light::RIGHT))
-                m_r->setColor(240, 200, 40, 255);
-            else
-                m_r->setColor(50, 200, 50, 255);
+            const RGB c = speedColor(glm::length(v.vel), v0);
 
-            if(m_scale < 2.0f)
+            if(m_scale < 1.5f)
             {
-                // At very low zoom levels, just draw a point
-                m_r->drawPoint(sx, sy);
+                // Too zoomed out for a body: a single colored point.
+                m_r->setColor(c.r, c.g, c.b, 255);
+                m_r->drawPoint(static_cast<int>(sx), static_cast<int>(sy));
+                continue;
             }
-            else
+
+            // Oriented body: length x ~2 m width (world meters) -> framebuffer px.
+            const float halfL = std::max(2.0f, v.length * 0.5f * m_scale);
+            const float halfW = std::max(1.5f, 1.0f * m_scale); // ~2 m wide
+            auto P = [&](float fwd, float lat) {
+                return RVertex{sx + ux * fwd + nx * lat, sy + uy * fwd + ny * lat,
+                               c.r, c.g, c.b, 255};
+            };
+            m_r->fillQuad(P(halfL, -halfW), P(halfL, halfW), P(-halfL, halfW), P(-halfL, -halfW));
+
+            // Rear brake (red) / turn-signal (amber) light dab over the body.
+            const int rx = static_cast<int>(sx - ux * halfL);
+            const int ry = static_cast<int>(sy - uy * halfL);
+            if(v.lightBits & light::BRAKE)
             {
-                // Calculate appropriate arrow size based on scale
-                int arrowLen = std::max(3, static_cast<int>(5 * m_scale));
-                int arrowWidth = std::max(1, static_cast<int>(m_scale / 2));
-
-                int ex = sx + static_cast<int>(ux * arrowLen);
-                int ey = sy + static_cast<int>(uy * arrowLen);
-
-                // Draw line with proper thickness
-                m_r->drawLine(sx, sy, ex, ey, arrowWidth);
-
-                // Draw arrowhead
-                float nx = -uy, ny = ux; // normal vector
-                int ax1 = ex - static_cast<int>((ux * arrowLen * 0.5f + nx * arrowLen * 0.3f));
-                int ay1 = ey - static_cast<int>((uy * arrowLen * 0.5f + ny * arrowLen * 0.3f));
-                int ax2 = ex - static_cast<int>((ux * arrowLen * 0.5f - nx * arrowLen * 0.3f));
-                int ay2 = ey - static_cast<int>((uy * arrowLen * 0.5f - ny * arrowLen * 0.3f));
-
-                // Draw arrowhead lines
-                m_r->drawLine(ex, ey, ax1, ay1, arrowWidth);
-                m_r->drawLine(ex, ey, ax2, ay2, arrowWidth);
+                const int d = std::max(2, static_cast<int>(m_scale * 0.8f));
+                m_r->setColor(250, 60, 45, 255);
+                m_r->fillRect(rx - d / 2, ry - d / 2, d, d);
+            }
+            else if(v.lightBits & (light::LEFT | light::RIGHT))
+            {
+                const int d = std::max(2, static_cast<int>(m_scale * 0.7f));
+                m_r->setColor(248, 200, 40, 255);
+                m_r->fillRect(rx - d / 2, ry - d / 2, d, d);
             }
         }
     }

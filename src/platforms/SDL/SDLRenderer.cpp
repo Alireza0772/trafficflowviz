@@ -1,7 +1,9 @@
 #include "rendering/platforms/SDL.hpp"
 #include "utils/LoggingManager.hpp"
 
+#include <cmath>
 #include <iostream>
+#include <vector>
 namespace tfv
 {
 
@@ -169,6 +171,26 @@ namespace tfv
             int oy = static_cast<int>(py * i);
             SDL_RenderDrawLine(m_renderer, x1 + ox, y1 + oy, x2 + ox, y2 + oy);
         }
+#endif
+    }
+
+    void SDLRenderer::fillGeometry(const RVertex* verts, int vcount, const int* idx, int icount)
+    {
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+        if(vcount <= 0 || icount <= 0)
+            return;
+        std::vector<SDL_Vertex> sv(static_cast<std::size_t>(vcount));
+        for(int i = 0; i < vcount; ++i)
+            sv[static_cast<std::size_t>(i)] =
+                SDL_Vertex{{verts[i].x, verts[i].y},
+                           {verts[i].r, verts[i].g, verts[i].b, verts[i].a},
+                           {0.0f, 0.0f}};
+        SDL_RenderGeometry(m_renderer, nullptr, sv.data(), vcount, idx, icount);
+#else
+        (void)verts;
+        (void)vcount;
+        (void)idx;
+        (void)icount;
 #endif
     }
 

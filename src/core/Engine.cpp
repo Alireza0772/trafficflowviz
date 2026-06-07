@@ -451,7 +451,7 @@ namespace tfv
 
     void Engine::render()
     {
-        m_renderer->clear(0, 0, 0, 255);
+        m_renderer->clear(24, 26, 32, 255); // dark "studio" backdrop so the scene reads
 
         // Render all layers
         m_layerStack.onRender();
