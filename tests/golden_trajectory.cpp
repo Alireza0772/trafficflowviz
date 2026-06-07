@@ -21,6 +21,7 @@
 #include "core/RoadNetwork.hpp"
 #include "core/Simulation.hpp"
 #include "core/TrafficEntity.hpp"
+#include "io/TrajectoryExporter.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -29,6 +30,7 @@
 #include <cstring>
 #include <glm/glm.hpp>
 #include <memory>
+#include <sstream>
 #include <vector>
 
 using namespace tfv;
@@ -38,6 +40,7 @@ static constexpr uint64_t kGolden = 0x9cb6732614cb624cULL; // hashes laneIndex (
 static constexpr uint64_t kGoldenMultiLane = 0x9a695a4adfbfd3e7ULL; // Gate 9 overtake
 static constexpr uint64_t kGoldenNN = 0xf164396f8160724dULL;        // Gate 10 NN determinism
 static constexpr uint64_t kGoldenVtable = 0x626e52c4a6c7691bULL;   // Gate 11 vtable adapter
+static constexpr uint64_t kGoldenTrajectoryCsv = 0x6498c43e5c3ee49cULL; // Gate 12 export CSV
 
 namespace
 {
@@ -559,6 +562,65 @@ static VtResult vtableRun()
     return r;
 }
 
+// Gate 12: trajectory export. Re-run the golden scenario with a TrajectoryExporter into a
+// string; the export must (a) leave the sim's state digest byte-identical to the golden
+// (proving it is side-effect-free) and (b) produce a deterministic, format-pinned CSV.
+struct CsvResult
+{
+    uint64_t csvDigest{0};
+    uint64_t stateDigest{0};
+};
+static CsvResult trajectoryCsvRun()
+{
+    RoadNetwork net = makeScenarioNetwork();
+    Simulation sim(&net);
+    sim.initialize(makeScenarioVehicles());
+    std::ostringstream oss;
+    TrajectoryExporter exporter(oss, 1);
+    const double dt = 0.02;
+    VehicleMap snap;
+    for(int t = 0; t < 600; ++t)
+    {
+        sim.update(dt);
+        exporter.sample(static_cast<uint64_t>(t), t * dt, sim); // AFTER update (no deadlock)
+        snap = sim.snapshot();
+    }
+    CsvResult r;
+    const std::string s = oss.str();
+    uint64_t h = 1469598103934665603ULL;
+    for(unsigned char c : s)
+    {
+        h ^= c;
+        h *= 1099511628211ULL;
+    }
+    r.csvDigest = h;
+
+    std::vector<uint64_t> ids;
+    for(const auto& [id, v] : snap)
+    {
+        (void)v;
+        ids.push_back(id);
+    }
+    std::sort(ids.begin(), ids.end());
+    uint64_t sh = 1469598103934665603ULL;
+    auto mix = [&](uint64_t x) {
+        sh ^= x;
+        sh *= 1099511628211ULL;
+    };
+    for(uint64_t id : ids)
+    {
+        const Vehicle& v = snap.at(id);
+        const float sp = glm::length(v.vel);
+        mix(id);
+        mix(v.segmentId);
+        mix(static_cast<uint64_t>(v.laneIndex));
+        mix(static_cast<uint64_t>(static_cast<int64_t>(std::llround(v.position * 1e6))));
+        mix(static_cast<uint64_t>(static_cast<int64_t>(std::llround(sp * 1e3))));
+    }
+    r.stateDigest = sh;
+    return r;
+}
+
 int main(int argc, char** argv)
 {
     bool printOnly = (argc > 1 && std::strcmp(argv[1], "--print-hash") == 0);
@@ -605,6 +667,10 @@ int main(int argc, char** argv)
     std::printf("vtable digest = 0x%016llx (abiOk=%d finite=%d bounded=%d)\n",
                 (unsigned long long)vtres.digest, vtres.abiOk ? 1 : 0, vtres.finite ? 1 : 0,
                 vtres.bounded ? 1 : 0);
+
+    CsvResult csv = trajectoryCsvRun();
+    std::printf("trajectory csv digest = 0x%016llx (state digest = 0x%016llx)\n",
+                (unsigned long long)csv.csvDigest, (unsigned long long)csv.stateDigest);
 
     if(printOnly)
         return 0;
@@ -755,8 +821,28 @@ int main(int argc, char** argv)
             ++failures;
         }
     }
+    {
+        if(csv.stateDigest != kGolden)
+        {
+            std::printf("FAIL: trajectory export perturbed the sim (state 0x%016llx != golden)\n",
+                        (unsigned long long)csv.stateDigest);
+            ++failures;
+        }
+        CsvResult csv2 = trajectoryCsvRun();
+        if(csv.csvDigest != csv2.csvDigest)
+        {
+            std::printf("FAIL: trajectory CSV non-deterministic\n");
+            ++failures;
+        }
+        if(kGoldenTrajectoryCsv != 0ULL && csv.csvDigest != kGoldenTrajectoryCsv)
+        {
+            std::printf("FAIL: trajectory CSV digest 0x%016llx != golden 0x%016llx\n",
+                        (unsigned long long)csv.csvDigest, (unsigned long long)kGoldenTrajectoryCsv);
+            ++failures;
+        }
+    }
 
     if(failures == 0)
-        std::printf("PASS: golden_trajectory (11 gates)\n");
+        std::printf("PASS: golden_trajectory (12 gates)\n");
     return failures == 0 ? 0 : 1;
 }

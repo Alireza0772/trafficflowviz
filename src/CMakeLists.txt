@@ -46,6 +46,11 @@ set(TRAFFICFLOWVIZ_SOURCES
     # Data loading sources
     data/CSVLoader.cpp
 
+    # Observability / export (Phase 7)
+    io/RunManifest.cpp
+    io/TrajectoryExporter.cpp
+    io/MetricsExporter.cpp
+
     # Network sources
     network/LiveFeed.cpp
 
@@ -157,6 +162,24 @@ endif()
 add_library(tfv_example_brain MODULE ${CMAKE_SOURCE_DIR}/examples/brains/example_brain.c)
 target_include_directories(tfv_example_brain PRIVATE ${CMAKE_SOURCE_DIR}/include)
 set_target_properties(tfv_example_brain PROPERTIES C_VISIBILITY_PRESET hidden)
+
+# Headless batch runner (no SDL window): runs the sim and exports manifest + CSVs.
+# Links the lib, which pulls SDL/Apple symbols even though no window is opened.
+add_executable(tfv_headless tools/headless_runner.cpp)
+target_compile_definitions(tfv_headless PRIVATE TFV_GIT_SHA="${TFV_GIT_SHA}")
+target_link_libraries(tfv_headless PRIVATE
+    trafficflowviz_lib
+    ${SDL2_LIBRARIES}
+    ${SDL2_IMAGE_LIBRARIES}
+    ${SDL2_TTF_LIBRARIES}
+)
+if(APPLE)
+    target_link_libraries(tfv_headless PRIVATE
+        "-framework Metal"
+        "-framework MetalKit"
+        "-framework Cocoa"
+    )
+endif()
 
 # Install targets
 install(TARGETS trafficviz

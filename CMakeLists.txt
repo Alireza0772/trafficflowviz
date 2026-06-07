@@ -21,6 +21,15 @@ option(TFV_WITH_ONNX "Use ONNX Runtime for onnx:<path> brains" OFF)
 
 # Custom find modules (e.g. FindONNXRuntime for raw header+lib ORT installs).
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
+
+# Short git SHA for the run manifest (degrades to "unknown" if git is absent).
+execute_process(COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE TFV_GIT_SHA OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET RESULT_VARIABLE _tfv_git_rc)
+if(NOT _tfv_git_rc EQUAL 0 OR TFV_GIT_SHA STREQUAL "")
+    set(TFV_GIT_SHA "unknown")
+endif()
 option(TFV_USE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
 option(TFV_ENABLE_DOCS "Build documentation with Doxygen" OFF)
 option(TFV_ENABLE_TESTING "Build unit tests" ON)

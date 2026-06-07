@@ -490,6 +490,15 @@ namespace tfv
         return getBoolValue("features.debug_mode", false);
     }
 
+    std::map<std::string, std::string> Configuration::snapshot(const std::string& prefix) const
+    {
+        std::map<std::string, std::string> out; // std::map -> sorted -> deterministic manifest
+        for(const auto& [key, value] : m_values)
+            if(key.rfind(prefix, 0) == 0)
+                out[key] = value;
+        return out;
+    }
+
     // Helper methods
     std::string Configuration::getValue(const std::string& key, const std::string& defaultValue) const
     {

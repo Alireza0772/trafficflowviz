@@ -82,6 +82,11 @@ namespace tfv
         uint32_t violationCount(uint64_t id) const;
         uint64_t totalViolations() const;
 
+        // Observability / export (Phase 7), all read-only under the lock.
+        std::string brainKind() const;        // current brain kind name ("rule"/"nn"/...)
+        std::string brainWeightsHash() const; // brain weights identity (for the manifest)
+        std::unordered_map<uint64_t, Action> lastActions() const; // held action per id (copy)
+
         // Test-only: swap the decision brain after initialize() (does not reset it).
         void setBrainForTest(std::unique_ptr<IBrain> brain) { m_brain = std::move(brain); }
 

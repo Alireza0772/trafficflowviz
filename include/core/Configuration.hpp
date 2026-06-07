@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <optional>
@@ -85,6 +86,13 @@ namespace tfv
         int getInt(const std::string& key, int defaultValue) const;
         std::string getString(const std::string& key, const std::string& defaultValue) const;
 
+        // Sorted snapshot of all keys starting with `prefix` (for the run manifest;
+        // sorted -> deterministic output).
+        std::map<std::string, std::string> snapshot(const std::string& prefix) const;
+
+        // Resolve a (possibly relative) data path against the working/exe/project dirs.
+        std::filesystem::path resolveRelativePath(const std::string& relativePath) const;
+
         // Generic get/set for extensibility (NOTE: templates are declared but not
         // defined; do not use until implemented — prefer the typed getters above).
         template<typename T>
@@ -117,7 +125,6 @@ namespace tfv
         std::filesystem::path m_workingDirectory;
         
         // Helper methods
-        std::filesystem::path resolveRelativePath(const std::string& relativePath) const;
         void setDefaults();
         std::string getValue(const std::string& key, const std::string& defaultValue = "") const;
         int getIntValue(const std::string& key, int defaultValue = 0) const;

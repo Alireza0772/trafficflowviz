@@ -985,6 +985,24 @@ namespace tfv
         return sum;
     }
 
+    std::string Simulation::brainKind() const
+    {
+        std::scoped_lock lock(m_mtx);
+        return m_brain ? std::string(m_brain->kindName()) : "none";
+    }
+
+    std::string Simulation::brainWeightsHash() const
+    {
+        std::scoped_lock lock(m_mtx);
+        return m_brain ? m_brain->weightsHash() : "n/a";
+    }
+
+    std::unordered_map<uint64_t, Action> Simulation::lastActions() const
+    {
+        std::scoped_lock lock(m_mtx);
+        return m_lastAction;
+    }
+
     SegmentStatsMap Simulation::getSegmentStats() const
     {
         std::scoped_lock lock(m_mtx);
