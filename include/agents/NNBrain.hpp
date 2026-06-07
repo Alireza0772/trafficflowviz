@@ -27,24 +27,35 @@ namespace tfv
     class NNBrain final : public IBrain
     {
       public:
+        // `population` is the size of a bank of independent seeded weight sets;
+        // vehicles are deterministically assigned to members by id hash, giving
+        // heterogeneous drivers. population==1 (default) == a single shared net
+        // (member 0 reproduces the seed's weights bit-for-bit). Clamped to [1,256].
         NNBrain(std::vector<int> layers, const std::string& activation, uint64_t seed,
-                const IdmParams& idm, float laneThreshold = 0.5f);
+                const IdmParams& idm, float laneThreshold = 0.5f, int population = 1);
 
         void decideBatch(const Observation* obs, int n, Action* out) override;
+        void decideBatchIds(const Observation* obs, const uint64_t* ids, int n,
+                            Action* out) override;
         void reset(uint64_t seed) override;
         std::string weightsHash() const override;
         const char* kindName() const override { return "nn"; }
         bool drivesLaneChange() const override { return true; }
 
         bool valid() const { return m_valid; }
+        int population() const { return m_population; }
 
       private:
         void initWeights(uint64_t seed);
+        // Forward one observation through bank member `member` -> Action.
+        void forwardOne(int member, const Observation& obs, Action& out) const;
 
-        std::vector<int> m_layers;             // layer sizes; front==OBS_LEN, back==4
-        int m_activation{0};                   // 0 tanh, 1 relu, 2 identity (hidden layers)
-        std::vector<std::vector<float>> m_W;   // per transition, row-major (out x in)
-        std::vector<std::vector<float>> m_b;   // per transition, length out
+        std::vector<int> m_layers; // layer sizes; front==OBS_LEN, back==4
+        int m_activation{0};       // 0 tanh, 1 relu, 2 identity (hidden layers)
+        // Bank of weight sets: m_W[member][transition] row-major (out x in); m_b[member][transition].
+        std::vector<std::vector<std::vector<float>>> m_W;
+        std::vector<std::vector<std::vector<float>>> m_b;
+        int m_population{1};
         IdmParams m_idm;
         float m_laneThreshold{0.5f};
         uint64_t m_seed{0};

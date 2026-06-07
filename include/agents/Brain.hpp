@@ -30,6 +30,16 @@ namespace tfv
         /** Decide for n agents. obs and out are caller-owned, length n. */
         virtual void decideBatch(const Observation* obs, int n, Action* out) = 0;
 
+        /** Id-aware batch decide: same as decideBatch but the per-agent vehicle ids are
+         *  available, so a brain can select per-vehicle weights (heterogeneous agents).
+         *  The default forwards to decideBatch (ids ignored), so existing brains are
+         *  unaffected. The Simulation calls this; obs/ids/out are length n. */
+        virtual void decideBatchIds(const Observation* obs, const uint64_t* ids, int n, Action* out)
+        {
+            (void)ids;
+            decideBatch(obs, n, out);
+        }
+
         /** Re-seed any internal RNG/state for reproducible (re-)initialization. */
         virtual void reset(uint64_t seed) = 0;
 

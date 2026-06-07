@@ -46,7 +46,8 @@ namespace tfv
             std::vector<int> layers = parseLayers(cfg.getString("sim.nn.layers", "24,16,8,4"));
             const std::string act = cfg.getString("sim.nn.activation", "tanh");
             const float thr = cfg.getFloat("sim.nn.lane_threshold", 0.5f);
-            auto nn = std::make_unique<NNBrain>(layers, act, cfg.getMasterSeed(), idm, thr);
+            const int pop = cfg.getInt("sim.nn.population", 1); // bank of heterogeneous nets (1=shared)
+            auto nn = std::make_unique<NNBrain>(layers, act, cfg.getMasterSeed(), idm, thr, pop);
             if(nn->valid())
             {
                 LOG_INFO("Using neural-net brain (weights {hash})", PARAM(hash, nn->weightsHash()));

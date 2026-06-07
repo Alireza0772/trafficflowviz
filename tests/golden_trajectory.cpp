@@ -39,8 +39,10 @@ using namespace tfv;
 static constexpr uint64_t kGolden = 0x9cb6732614cb624cULL; // hashes laneIndex (Phase 6)
 static constexpr uint64_t kGoldenMultiLane = 0x9a695a4adfbfd3e7ULL; // Gate 9 overtake
 static constexpr uint64_t kGoldenNN = 0xf164396f8160724dULL;        // Gate 10 NN determinism
+static constexpr uint64_t kGoldenNNPop = 0x8a1cc6b5bd837f1aULL;     // Gate 15 NN bank (population=4)
 static constexpr uint64_t kGoldenVtable = 0x626e52c4a6c7691bULL;   // Gate 11 vtable adapter
 static constexpr uint64_t kGoldenTrajectoryCsv = 0x6498c43e5c3ee49cULL; // Gate 12 export CSV
+static constexpr uint64_t kGoldenCrossLane = 0xf61e1bbd64720560ULL; // Gate 14 lane-aware cross-seg
 
 namespace
 {
@@ -353,7 +355,7 @@ struct NNResult
     bool overlap{false};
     float maxSpeed{0.0f};
 };
-static NNResult nnRun()
+static NNResult nnRun(int population = 1)
 {
     RoadNetwork net;
     Node n1, n2;
@@ -386,7 +388,8 @@ static NNResult nnRun()
     sim.initialize(std::move(v));
     IdmParams idm;
     sim.setBrainForTest(
-        std::make_unique<NNBrain>(std::vector<int>{24, 8, 4}, "tanh", 12345ULL, idm, 0.5f));
+        std::make_unique<NNBrain>(std::vector<int>{24, 8, 4}, "tanh", 12345ULL, idm, 0.5f,
+                                  population));
 
     NNResult r;
     VehicleMap snap;
@@ -701,6 +704,108 @@ static bool inspectGate()
     return ok;
 }
 
+// Gate 14: lane-aware cross-segment leader. Topology 1->2->3; the upstream seg0 is
+// single-lane, the downstream seg1 has TWO lanes. A follower nears node 2 on seg0 with
+// NO same-segment leader. Downstream seg1 holds ONE stationary car, parked NEAR the node
+// but in lane 1 — the lane the follower will NOT enter (it enters lane 0, clamped from
+// laneIndex 0). The old any-lane front() leader would brake the follower for that lane-1
+// car; the lane-aware scan sees lane 0 empty -> free road, so the follower must stay fast.
+// A control run with the blocker moved into lane 0 confirms the follower DOES brake then,
+// proving the filter discriminates by lane (not merely by ignoring the downstream).
+struct CrossLaneResult
+{
+    uint64_t digest{0};
+    float blockerInLane1Speed{0.0f}; // blocker in the lane ego avoids -> must stay fast
+    float blockerInLane0Speed{0.0f}; // blocker in the lane ego enters -> must brake
+};
+static CrossLaneResult crossLaneRun()
+{
+    auto runWithBlockerLane = [](int blockerLane) -> std::pair<float, VehicleMap> {
+        RoadNetwork net;
+        auto addNode = [&](uint32_t id, float x, float y) {
+            Node n;
+            n.id = id;
+            n.pos = {x, y};
+            net.addNode(n);
+        };
+        addNode(1, 0, 0);
+        addNode(2, 100, 0);
+        addNode(3, 200, 0);
+        auto addSeg = [&](uint32_t id, uint32_t f, uint32_t t, int lanes) {
+            RoadSegment s;
+            s.id = id;
+            s.fromNode = f;
+            s.toNode = t;
+            s.dir = {1, 0};
+            s.length = 100.0f;
+            s.speedLimit = 13.9f;
+            s.lanes = lanes;
+            net.addSegment(s);
+        };
+        addSeg(0, 1, 2, 1); // upstream: single lane
+        addSeg(1, 2, 3, 2); // downstream: two lanes
+
+        std::vector<Vehicle> v;
+        Vehicle follower; // lane 0 on seg0; enters lane 0 downstream (clamp of 0)
+        follower.id = 1;
+        follower.segmentId = 0;
+        follower.position = 0.90f;
+        follower.laneIndex = 0;
+        follower.vel = {12.0f, 0.0f};
+        v.push_back(follower);
+        Vehicle blocker; // stationary, just past the node on seg1
+        blocker.id = 2;
+        blocker.segmentId = 1;
+        blocker.position = 0.05f;
+        blocker.laneIndex = static_cast<uint8_t>(blockerLane);
+        blocker.vel = {0.0f, 0.0f};
+        v.push_back(blocker);
+
+        Simulation sim(&net);
+        sim.initialize(std::move(v));
+        VehicleMap snap;
+        for(int t = 0; t < 30; ++t)
+        {
+            sim.update(0.02);
+            snap = sim.snapshot();
+        }
+        return {glm::length(snap.at(1).vel), snap};
+    };
+
+    CrossLaneResult r;
+    auto [lane1Speed, lane1Snap] = runWithBlockerLane(1); // blocker in the avoided lane
+    auto [lane0Speed, lane0Snap] = runWithBlockerLane(0); // blocker in the entered lane
+    r.blockerInLane1Speed = lane1Speed;
+    r.blockerInLane0Speed = lane0Speed;
+
+    // Digest the lane-1-blocker run (the one the new behaviour changes): a clean fork is
+    // single-lane downstream, so this is the multi-lane downstream case that moves.
+    std::vector<uint64_t> ids;
+    for(const auto& [id, v] : lane1Snap)
+    {
+        (void)v;
+        ids.push_back(id);
+    }
+    std::sort(ids.begin(), ids.end());
+    uint64_t h = 1469598103934665603ULL;
+    auto mix = [&](uint64_t x) {
+        h ^= x;
+        h *= 1099511628211ULL;
+    };
+    for(uint64_t id : ids)
+    {
+        const Vehicle& v = lane1Snap.at(id);
+        const float sp = glm::length(v.vel);
+        mix(id);
+        mix(v.segmentId);
+        mix(static_cast<uint64_t>(v.laneIndex));
+        mix(static_cast<uint64_t>(static_cast<int64_t>(std::llround(v.position * 1e6))));
+        mix(static_cast<uint64_t>(static_cast<int64_t>(std::llround(sp * 1e3))));
+    }
+    r.digest = h;
+    return r;
+}
+
 int main(int argc, char** argv)
 {
     bool printOnly = (argc > 1 && std::strcmp(argv[1], "--print-hash") == 0);
@@ -743,6 +848,11 @@ int main(int argc, char** argv)
                 (unsigned long long)nn.digest, nn.finite ? 1 : 0, nn.bounded ? 1 : 0,
                 nn.overlap ? 1 : 0, nn.maxSpeed);
 
+    NNResult nnp = nnRun(4); // bank of 4 heterogeneous nets
+    std::printf("nn-pop digest = 0x%016llx (finite=%d bounded=%d overlap=%d) [!= nn: %d]\n",
+                (unsigned long long)nnp.digest, nnp.finite ? 1 : 0, nnp.bounded ? 1 : 0,
+                nnp.overlap ? 1 : 0, (nnp.digest != nn.digest) ? 1 : 0);
+
     VtResult vtres = vtableRun();
     std::printf("vtable digest = 0x%016llx (abiOk=%d finite=%d bounded=%d)\n",
                 (unsigned long long)vtres.digest, vtres.abiOk ? 1 : 0, vtres.finite ? 1 : 0,
@@ -751,6 +861,10 @@ int main(int argc, char** argv)
     CsvResult csv = trajectoryCsvRun();
     std::printf("trajectory csv digest = 0x%016llx (state digest = 0x%016llx)\n",
                 (unsigned long long)csv.csvDigest, (unsigned long long)csv.stateDigest);
+
+    CrossLaneResult cl = crossLaneRun();
+    std::printf("cross-lane digest = 0x%016llx (blockerLane1=%.3f blockerLane0=%.3f)\n",
+                (unsigned long long)cl.digest, cl.blockerInLane1Speed, cl.blockerInLane0Speed);
 
     if(printOnly)
         return 0;
@@ -877,6 +991,35 @@ int main(int argc, char** argv)
             ++failures;
         }
     }
+    // Gate 15: per-vehicle NN bank (population>1) — heterogeneous but still safe +
+    // deterministic. NOTE: kGoldenNNPop is coupled to the vehicle-id->member assignment
+    // (splitmix64(id)%K), so a future change to the id-allocation scheme is expected to
+    // re-pin this gate — but MUST leave Gate 10/kGoldenNN and the 5 originals byte-identical.
+    {
+        NNResult nnp2 = nnRun(4);
+        if(nnp.digest != nnp2.digest)
+        {
+            std::printf("FAIL: nn bank (population=4) non-deterministic\n");
+            ++failures;
+        }
+        if(nnp.digest == kGoldenNN)
+        {
+            std::printf("FAIL: nn bank population=4 did not diverge from the shared net\n");
+            ++failures;
+        }
+        if(!nnp.finite || !nnp.bounded || nnp.overlap)
+        {
+            std::printf("FAIL: nn bank produced unsafe state (finite=%d bounded=%d overlap=%d)\n",
+                        nnp.finite ? 1 : 0, nnp.bounded ? 1 : 0, nnp.overlap ? 1 : 0);
+            ++failures;
+        }
+        if(kGoldenNNPop != 0ULL && nnp.digest != kGoldenNNPop)
+        {
+            std::printf("FAIL: nn-pop digest 0x%016llx != golden 0x%016llx\n",
+                        (unsigned long long)nnp.digest, (unsigned long long)kGoldenNNPop);
+            ++failures;
+        }
+    }
     {
         VtResult vt2 = vtableRun();
         if(!vtres.abiOk)
@@ -926,8 +1069,32 @@ int main(int argc, char** argv)
         std::printf("FAIL: inspect() disagreed with the vehicle's real state/action\n");
         ++failures;
     }
+    {
+        CrossLaneResult cl2 = crossLaneRun();
+        if(cl.digest != cl2.digest)
+        {
+            std::printf("FAIL: cross-lane scenario non-deterministic\n");
+            ++failures;
+        }
+        if(kGoldenCrossLane != 0ULL && cl.digest != kGoldenCrossLane)
+        {
+            std::printf("FAIL: cross-lane digest 0x%016llx != golden 0x%016llx\n",
+                        (unsigned long long)cl.digest, (unsigned long long)kGoldenCrossLane);
+            ++failures;
+        }
+        if(kGoldenCrossLane == 0ULL)
+            std::printf("NOTE: cross-lane digest not pinned (kGoldenCrossLane==0); skipping.\n");
+        // Lane-aware behaviour: a blocker in the lane the ego will NOT enter must not slow
+        // it (free road downstream); a blocker in the lane it WILL enter must brake it.
+        if(cl.blockerInLane1Speed < cl.blockerInLane0Speed + 2.0f)
+        {
+            std::printf("FAIL: cross-seg leader not lane-aware (lane1=%.3f lane0=%.3f)\n",
+                        cl.blockerInLane1Speed, cl.blockerInLane0Speed);
+            ++failures;
+        }
+    }
 
     if(failures == 0)
-        std::printf("PASS: golden_trajectory (13 gates)\n");
+        std::printf("PASS: golden_trajectory (15 gates)\n");
     return failures == 0 ? 0 : 1;
 }

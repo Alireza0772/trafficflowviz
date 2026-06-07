@@ -627,7 +627,25 @@ namespace tfv
                     auto bit = bySeg.find(nextId);
                     if(bit == bySeg.end() || bit->second.empty())
                         continue;
-                    const Vehicle& lead = vehs[bit->second.front()]; // smallest position downstream
+                    // Lane-aware: the ego enters the lane it will be clamped into on the
+                    // downstream segment (mirrors the hand-off clamp in Phase B). Scan that
+                    // lane's nearest (min-position) car instead of the any-lane front(), so a
+                    // car never brakes for a downstream vehicle in a lane it won't occupy.
+                    // Buckets are (position asc, id asc) sorted, so the first match is nearest.
+                    // Single-lane downstream: enterLane==0 and all cars are lane 0 -> identical
+                    // to front() (the golden fork's downstream is single-lane: kGolden stays).
+                    const int enterLane =
+                        std::min<int>(v.laneIndex, std::max(0, nextSeg->lanes - 1));
+                    long leadIdx = -1;
+                    for(std::size_t j : bit->second)
+                        if(static_cast<int>(vehs[j].laneIndex) == enterLane)
+                        {
+                            leadIdx = static_cast<long>(j);
+                            break;
+                        }
+                    if(leadIdx < 0)
+                        continue; // no car in the lane we will enter -> free road downstream
+                    const Vehicle& lead = vehs[static_cast<std::size_t>(leadIdx)];
                     float gapM =
                         remM + lead.position * nextSeg->length - 0.5f * (v.length + lead.length);
                     if(gapM < 0.1f)
@@ -663,7 +681,11 @@ namespace tfv
                 }
 
                 std::vector<Action> out(deciders.size());
-                m_brain->decideBatch(obs.data(), static_cast<int>(deciders.size()), out.data());
+                std::vector<uint64_t> ids(deciders.size()); // per-vehicle ids for id-aware brains
+                for(std::size_t k = 0; k < deciders.size(); ++k)
+                    ids[k] = vehs[deciders[k]].id;
+                m_brain->decideBatchIds(obs.data(), ids.data(),
+                                        static_cast<int>(deciders.size()), out.data());
 
                 for(std::size_t k = 0; k < deciders.size(); ++k)
                     m_lastAction[vehs[deciders[k]].id] = out[k];
@@ -1072,14 +1094,30 @@ namespace tfv
                     auto bit = bySeg.find(nextId);
                     if(nextSeg && bit != bySeg.end() && !bit->second.empty())
                     {
-                        const Vehicle& lead = vehs[bit->second.front()];
-                        float gapM = remM + lead.position * nextSeg->length -
-                                     0.5f * (v.length + lead.length);
-                        if(gapM < 0.1f)
-                            gapM = 0.1f;
-                        crossGap = std::min(gapM / OBS_RANGE_SCALE, 1.0f);
-                        crossRel = (glm::length(v.vel) - glm::length(lead.vel)) / OBS_SPEED_SCALE;
-                        hasCross = true;
+                        // Lane-aware: scan the lane the ego will enter downstream (mirrors the
+                        // update() cross-seg block and the Phase-B hand-off clamp). MUST stay
+                        // byte-identical to update() or inspect() reports a phantom leader.
+                        const int enterLane =
+                            std::min<int>(v.laneIndex, std::max(0, nextSeg->lanes - 1));
+                        long leadIdx = -1;
+                        for(std::size_t j : bit->second)
+                            if(static_cast<int>(vehs[j].laneIndex) == enterLane)
+                            {
+                                leadIdx = static_cast<long>(j);
+                                break;
+                            }
+                        if(leadIdx >= 0)
+                        {
+                            const Vehicle& lead = vehs[static_cast<std::size_t>(leadIdx)];
+                            float gapM = remM + lead.position * nextSeg->length -
+                                         0.5f * (v.length + lead.length);
+                            if(gapM < 0.1f)
+                                gapM = 0.1f;
+                            crossGap = std::min(gapM / OBS_RANGE_SCALE, 1.0f);
+                            crossRel =
+                                (glm::length(v.vel) - glm::length(lead.vel)) / OBS_SPEED_SCALE;
+                            hasCross = true;
+                        }
                     }
                 }
             }
