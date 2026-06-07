@@ -621,6 +621,86 @@ static CsvResult trajectoryCsvRun()
     return r;
 }
 
+// Gate 13: Simulation::inspect() (observability engine) must agree with reality AND
+// faithfully reproduce the leader + sector perception (not just self state). Scenario:
+// a 2-lane segment with a follower (id2, lane 0) behind a leader (id1, lane 0) and a
+// side car (id3, lane 1) right beside the follower — which blocks any lane change, so
+// the arrangement is stable and exercises the lane-aware leader + a side sector.
+static bool inspectGate()
+{
+    RoadNetwork net;
+    Node n1, n2;
+    n1.id = 1;
+    n1.pos = {0, 0};
+    n2.id = 2;
+    n2.pos = {1000, 0};
+    net.addNode(n1);
+    net.addNode(n2);
+    RoadSegment s;
+    s.id = 0;
+    s.fromNode = 1;
+    s.toNode = 2;
+    s.dir = {1, 0};
+    s.length = 1000.0f;
+    s.speedLimit = 13.9f;
+    s.lanes = 2;
+    net.addSegment(s);
+    std::vector<Vehicle> v(3);
+    v[0].id = 1; // leader, lane 0
+    v[0].segmentId = 0;
+    v[0].position = 0.53f;
+    v[0].laneIndex = 0;
+    v[0].vel = {10.0f, 0.0f};
+    v[1].id = 2; // follower, lane 0 (inspect this one)
+    v[1].segmentId = 0;
+    v[1].position = 0.50f;
+    v[1].laneIndex = 0;
+    v[1].vel = {10.0f, 0.0f};
+    v[2].id = 3; // beside the follower, lane 1
+    v[2].segmentId = 0;
+    v[2].position = 0.50f;
+    v[2].laneIndex = 1;
+    v[2].vel = {10.0f, 0.0f};
+
+    Simulation sim(&net);
+    sim.initialize(std::move(v));
+    for(int t = 0; t < 8; ++t)
+        sim.update(0.02);
+    const auto snap = sim.snapshot();
+    const auto acts = sim.lastActions();
+    const VehicleInspection ins = sim.inspect(2);
+    if(!ins.found)
+    {
+        std::printf("FAIL: inspect(2) not found\n");
+        return false;
+    }
+    const Vehicle& f = snap.at(2);
+    bool ok = true;
+    if(ins.segmentId != f.segmentId || ins.laneIndex != f.laneIndex)
+        ok = false;
+    if(std::fabs(ins.obs[obs_idx::PositionAlong] - f.position) > 1e-3f)
+        ok = false;
+    if(std::fabs(ins.obs[obs_idx::SelfSpeed] * OBS_SPEED_SCALE - glm::length(f.vel)) > 0.5f)
+        ok = false;
+    // Lane-aware leader faithfulness: id1 is the same-lane car ahead.
+    if(ins.leaderId != 1)
+        ok = false;
+    if(ins.obs[obs_idx::FrontHasLeader] <= 0.5f)
+        ok = false;
+    if(!(ins.obs[obs_idx::FrontGap] > 0.0f && ins.obs[obs_idx::FrontGap] < 1.0f))
+        ok = false; // a real (in-range) leader gap, not free road
+    // Sector faithfulness: id3 (lane 1, beside) is a side-sector neighbour.
+    const SensedNeighbor& L = ins.sectors[static_cast<int>(Sector::Left)];
+    const SensedNeighbor& R = ins.sectors[static_cast<int>(Sector::Right)];
+    if(!((L.valid && L.id == 3) || (R.valid && R.id == 3)))
+        ok = false;
+    // Action faithfulness: the held action is surfaced unchanged.
+    auto it = acts.find(2);
+    if(it == acts.end() || it->second.accel != ins.action.accel)
+        ok = false;
+    return ok;
+}
+
 int main(int argc, char** argv)
 {
     bool printOnly = (argc > 1 && std::strcmp(argv[1], "--print-hash") == 0);
@@ -841,8 +921,13 @@ int main(int argc, char** argv)
             ++failures;
         }
     }
+    if(!inspectGate())
+    {
+        std::printf("FAIL: inspect() disagreed with the vehicle's real state/action\n");
+        ++failures;
+    }
 
     if(failures == 0)
-        std::printf("PASS: golden_trajectory (12 gates)\n");
+        std::printf("PASS: golden_trajectory (13 gates)\n");
     return failures == 0 ? 0 : 1;
 }

@@ -134,7 +134,10 @@ namespace tfv
             }
             const float cell = std::max({m_perceptionParams.rangeFront,
                                          m_perceptionParams.rangeRear, m_perceptionParams.rangeSide});
-            m_grid.setBounds(mn - glm::vec2(cell, cell), mx + glm::vec2(cell, cell), cell);
+            m_gridMin = mn - glm::vec2(cell, cell); // cached for inspect()'s local grid
+            m_gridMax = mx + glm::vec2(cell, cell);
+            m_gridCell = cell;
+            m_grid.setBounds(m_gridMin, m_gridMax, m_gridCell);
         }
 
         // MOBIL lane-change (Phase 6).
@@ -541,6 +544,8 @@ namespace tfv
     void Simulation::update(double dt)
     {
         std::scoped_lock lock(m_mtx);
+
+        m_lastDt = dt; // remembered for inspect()'s time-to-change channel (not used by the step)
 
         // Update time since last statistics update
         m_timeSinceLastUpdate += dt;
@@ -1001,6 +1006,103 @@ namespace tfv
     {
         std::scoped_lock lock(m_mtx);
         return m_lastAction;
+    }
+
+    VehicleInspection Simulation::inspect(uint64_t id) const
+    {
+        std::scoped_lock lock(m_mtx);
+        VehicleInspection r;
+        if(!m_roadNetwork)
+            return r;
+        const auto& vehs = m_world.vehicles(); // ascending-id
+
+        long selfIdx = -1;
+        for(std::size_t i = 0; i < vehs.size(); ++i)
+            if(vehs[i].id == id)
+            {
+                selfIdx = static_cast<long>(i);
+                break;
+            }
+        if(selfIdx < 0)
+            return r;
+        const std::size_t si = static_cast<std::size_t>(selfIdx);
+
+        // Replicate Phase A locally (read-only): same-lane leader + cross-segment override.
+        std::unordered_map<uint32_t, std::vector<std::size_t>> bySeg;
+        for(std::size_t i = 0; i < vehs.size(); ++i)
+            bySeg[vehs[i].segmentId].push_back(i);
+        for(auto& [seg, idxs] : bySeg)
+        {
+            (void)seg;
+            std::sort(idxs.begin(), idxs.end(), [&](std::size_t a, std::size_t b) {
+                if(vehs[a].position != vehs[b].position)
+                    return vehs[a].position < vehs[b].position;
+                return vehs[a].id < vehs[b].id;
+            });
+        }
+        long leaderIdx = -1;
+        {
+            const auto& idxs = bySeg[vehs[si].segmentId];
+            std::size_t k = 0;
+            for(; k < idxs.size(); ++k)
+                if(idxs[k] == si)
+                    break;
+            for(std::size_t j = k + 1; j < idxs.size(); ++j)
+                if(vehs[idxs[j]].laneIndex == vehs[si].laneIndex &&
+                   vehs[idxs[j]].position > vehs[si].position)
+                {
+                    leaderIdx = static_cast<long>(idxs[j]);
+                    break;
+                }
+        }
+        float crossGap = 1.0f, crossRel = 0.0f;
+        bool hasCross = false;
+        if(m_crossSegmentLeader && leaderIdx < 0)
+        {
+            const Vehicle& v = vehs[si];
+            const auto* seg = m_roadNetwork->getSegment(v.segmentId);
+            if(seg)
+            {
+                const float remM = (1.0f - v.position) * seg->length;
+                if(remM <= m_perceptionParams.rangeFront)
+                {
+                    const uint32_t nextId = nextSegmentForLookahead(v, *seg);
+                    const auto* nextSeg =
+                        (nextId != UINT32_MAX) ? m_roadNetwork->getSegment(nextId) : nullptr;
+                    auto bit = bySeg.find(nextId);
+                    if(nextSeg && bit != bySeg.end() && !bit->second.empty())
+                    {
+                        const Vehicle& lead = vehs[bit->second.front()];
+                        float gapM = remM + lead.position * nextSeg->length -
+                                     0.5f * (v.length + lead.length);
+                        if(gapM < 0.1f)
+                            gapM = 0.1f;
+                        crossGap = std::min(gapM / OBS_RANGE_SCALE, 1.0f);
+                        crossRel = (glm::length(v.vel) - glm::length(lead.vel)) / OBS_SPEED_SCALE;
+                        hasCross = true;
+                    }
+                }
+            }
+        }
+
+        UniformGrid grid; // local (inspect is const; never touch m_grid)
+        grid.setBounds(m_gridMin, m_gridMax, m_gridCell);
+        grid.rebuild(vehs);
+        r.sectors = sense(si, vehs, grid, m_perceptionParams);
+        r.obs = buildObservation(vehs[si], leaderIdx, vehs, r.sectors, crossGap, crossRel, hasCross,
+                                 m_lastDt);
+        auto la = m_lastAction.find(id);
+        if(la != m_lastAction.end())
+            r.action = la->second;
+        auto vio = m_violations.find(id);
+        if(vio != m_violations.end())
+            r.violations = vio->second;
+        r.leaderId = (leaderIdx >= 0) ? static_cast<long>(vehs[leaderIdx].id) : -1;
+        r.segmentId = vehs[si].segmentId;
+        r.laneIndex = vehs[si].laneIndex;
+        r.speed = glm::length(vehs[si].vel);
+        r.found = true;
+        return r;
     }
 
     SegmentStatsMap Simulation::getSegmentStats() const

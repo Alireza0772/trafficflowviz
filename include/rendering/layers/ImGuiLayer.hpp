@@ -58,8 +58,13 @@ namespace tfv
         AlertManager* m_alertManager{nullptr};
         RecordingManager* m_recordingManager{nullptr};
 
+        // Vehicle inspector (Phase 7 observability): shows the selected vehicle's
+        // observation/action/sectors/violations from Simulation::inspect().
+        void renderVehicleInspector();
+
         bool m_initialized{false};
         bool m_showKeybindings{false};
+        bool m_showInspector{false};
 
         // FPS tracking
         int m_fps{0};

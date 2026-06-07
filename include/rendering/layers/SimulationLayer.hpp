@@ -6,6 +6,8 @@
 #include "core/Simulation.hpp"
 #include "rendering/Renderer.hpp"
 #include "rendering/SceneRenderer.hpp"
+#include <cstdint>
+#include <glm/glm.hpp>
 #include <memory>
 #include <string>
 
@@ -40,6 +42,13 @@ namespace tfv
         // Get road network for use by other layers
         const RoadNetwork* getRoadNetwork() const { return m_simulation->getRoadNetwork(); }
 
+        // Map a logical-point cursor position to world coordinates (inverse of the
+        // vehicle render transform). For inspector vehicle picking + the debug overlay.
+        glm::vec2 screenToWorld(float logicalX, float logicalY) const;
+
+        // The vehicle the user clicked (0 = none); used by the inspector / debug overlay.
+        uint64_t selectedVehicleId() const { return m_selectedVehicleId; }
+
       private:
         // drawable-pixels / window-points (1.0 except on hi-DPI displays)
         float framebufferScale() const;
@@ -57,6 +66,7 @@ namespace tfv
         bool m_isDragging = false;
         float m_lastMouseX = 0.0f;
         float m_lastMouseY = 0.0f;
+        uint64_t m_selectedVehicleId = 0; // clicked vehicle for the inspector (0 = none)
     };
 
 } // namespace tfv

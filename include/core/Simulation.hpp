@@ -34,6 +34,21 @@ namespace tfv
     using AlertCallback =
         std::function<void(AlertType type, uint32_t segmentId, const std::string& message)>;
 
+    // Read-only snapshot of one vehicle's decision inputs/outputs for the inspector
+    // (Phase 7). Recomputed on demand by Simulation::inspect(); never stored per tick.
+    struct VehicleInspection
+    {
+        bool found{false};
+        Observation obs{};
+        Action action{};
+        std::array<SensedNeighbor, 4> sectors{};
+        uint32_t violations{0};
+        long leaderId{-1}; // id of the same-lane leader, -1 if none
+        uint32_t segmentId{0};
+        uint8_t laneIndex{0};
+        float speed{0.0f};
+    };
+
     class Simulation
     {
       public:
@@ -86,6 +101,15 @@ namespace tfv
         std::string brainKind() const;        // current brain kind name ("rule"/"nn"/...)
         std::string brainWeightsHash() const; // brain weights identity (for the manifest)
         std::unordered_map<uint64_t, Action> lastActions() const; // held action per id (copy)
+
+        // Recompute one vehicle's observation/action/sectors on demand (read-only; reuses
+        // the exact Phase-A logic). For the inspector/debug overlay — never per-tick.
+        // NOTE: obs is the LIVE current-frame perception while `action` is the currently
+        // HELD action (decided at the decision rate, possibly an earlier tick); and the
+        // signal channels (8/9 + the red/amber front merge) reflect the post-step light
+        // state (the controller advances at the end of update), so for a vehicle at a
+        // signalized node they may be one tick ahead of the decision's inputs.
+        VehicleInspection inspect(uint64_t id) const;
 
         // Test-only: swap the decision brain after initialize() (does not reset it).
         void setBrainForTest(std::unique_ptr<IBrain> brain) { m_brain = std::move(brain); }
@@ -162,6 +186,10 @@ namespace tfv
         UniformGrid m_grid;
         PerceptionParams m_perceptionParams;
         bool m_crossSegmentLeader{true}; // S3 behavioral toggle (gates the digest change)
+        glm::vec2 m_gridMin{0.0f, 0.0f}; // cached grid bounds (for inspect()'s local grid)
+        glm::vec2 m_gridMax{1.0f, 1.0f};
+        float m_gridCell{60.0f};
+        double m_lastDt{0.02}; // last update() dt (for inspect()'s obs time-to-change)
 
         // MOBIL lane-change (Phase 6)
         struct MobilParams

@@ -75,6 +75,15 @@ namespace tfv
         m_sceneRenderer.reset();
     }
 
+    glm::vec2 SimulationLayer::screenToWorld(float logicalX, float logicalY) const
+    {
+        // Inverse of the vehicle render transform screen_px = world*zoom + pan, where the
+        // cursor arrives in logical points and the scene works in framebuffer pixels.
+        const float fb = framebufferScale();
+        const float z = std::max(0.01f, getZoom());
+        return glm::vec2((logicalX * fb - getPanX()) / z, (logicalY * fb - getPanY()) / z);
+    }
+
     bool SimulationLayer::onEvent(Event& event)
     {
         // Camera controls: left-drag to pan, wheel / +- to zoom, arrows to pan.
@@ -89,6 +98,24 @@ namespace tfv
                 m_isDragging = true;
                 m_lastMouseX = e.getX();
                 m_lastMouseY = e.getY();
+                // Pick the nearest vehicle to the cursor (within ~14 logical px) for the
+                // inspector; clears the selection if the click is on empty road.
+                const glm::vec2 w = screenToWorld(e.getX(), e.getY());
+                const float z = std::max(0.01f, getZoom());
+                const float pr = 14.0f * framebufferScale() / z; // pick radius in world units
+                uint64_t best = 0;
+                float bestD2 = pr * pr;
+                for(const auto& [id, v] : m_simulation->snapshot())
+                {
+                    const float dx = v.worldPos.x - w.x, dy = v.worldPos.y - w.y;
+                    const float d2 = dx * dx + dy * dy;
+                    if(d2 <= bestD2)
+                    {
+                        bestD2 = d2;
+                        best = id;
+                    }
+                }
+                m_selectedVehicleId = best;
                 return true;
             }
             return false;

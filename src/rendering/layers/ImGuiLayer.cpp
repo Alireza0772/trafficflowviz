@@ -114,6 +114,11 @@ namespace tfv
             renderKeybindingsWindow();
         }
 
+        if(m_showInspector)
+        {
+            renderVehicleInspector();
+        }
+
         // Render status bar at the bottom
         renderStatusBar();
 
@@ -198,6 +203,13 @@ namespace tfv
                 if(ImGui::MenuItem("Keybindings", "K", &keybindings))
                 {
                     m_showKeybindings = keybindings;
+                }
+
+                // Toggle the vehicle inspector
+                bool inspector = m_showInspector;
+                if(ImGui::MenuItem("Vehicle Inspector", "I", &inspector))
+                {
+                    m_showInspector = inspector;
                 }
 
                 // Toggle layers
@@ -344,6 +356,66 @@ namespace tfv
             ImGui::PopTextWrapPos();
             ImGui::EndTooltip();
         }
+    }
+
+    void ImGuiLayer::renderVehicleInspector()
+    {
+        if(ImGui::Begin("Vehicle Inspector", &m_showInspector))
+        {
+            const uint64_t id = m_simulationLayer ? m_simulationLayer->selectedVehicleId() : 0;
+            if(id == 0)
+            {
+                ImGui::TextWrapped(
+                    "Click a vehicle in the scene to inspect its perception and decision.");
+            }
+            else
+            {
+                const VehicleInspection ins = m_simulation->inspect(id);
+                if(!ins.found)
+                {
+                    ImGui::Text("Vehicle #%llu not found (despawned).", (unsigned long long)id);
+                }
+                else
+                {
+                    ImGui::Text("Vehicle #%llu   brain: %s", (unsigned long long)id,
+                                m_simulation->brainKind().c_str());
+                    ImGui::Text("segment %u  lane %u  speed %.2f m/s  leader %lld  violations %u",
+                                ins.segmentId, (unsigned)ins.laneIndex, ins.speed,
+                                (long long)ins.leaderId, ins.violations);
+                    ImGui::Separator();
+                    const Action& a = ins.action;
+                    ImGui::Text("Action:  accel %.3f   laneChange %d   turn %d   lights 0x%02X",
+                                a.accel, (int)a.laneChange, (int)a.turn, (unsigned)a.lightCmd);
+                    ImGui::Separator();
+                    static const char* kLabels[24] = {
+                        "self_speed",   "self_accel",    "lane_fraction", "position",
+                        "speed_limit",  "congestion",    "dist_intersxn", "lane_count",
+                        "signal_phase", "signal_ttc",    "sign_type",     "front_gap",
+                        "front_relspd", "front_leader",  "rear_dist",     "rear_relspd",
+                        "rear_light",   "left_dist",     "left_relspd",   "left_light",
+                        "right_dist",   "right_relspd",  "right_light",   "reserved"};
+                    if(ImGui::CollapsingHeader("Observation (24 channels)",
+                                               ImGuiTreeNodeFlags_DefaultOpen))
+                        for(int i = 0; i < 24; ++i)
+                            ImGui::Text("  [%2d] %-14s % .4f", i, kLabels[i], ins.obs[i]);
+                    if(ImGui::CollapsingHeader("Perception sectors", ImGuiTreeNodeFlags_DefaultOpen))
+                    {
+                        static const char* sn[4] = {"Front", "Rear", "Left", "Right"};
+                        for(int s = 0; s < 4; ++s)
+                        {
+                            const SensedNeighbor& n = ins.sectors[s];
+                            if(n.valid)
+                                ImGui::Text("  %-5s id %llu  dist %.2f  relSpd %.2f  lights 0x%02X",
+                                            sn[s], (unsigned long long)n.id, n.relDist, n.relSpeed,
+                                            (unsigned)n.lightBits);
+                            else
+                                ImGui::Text("  %-5s (clear)", sn[s]);
+                        }
+                    }
+                }
+            }
+        }
+        ImGui::End();
     }
 
 } // namespace tfv
