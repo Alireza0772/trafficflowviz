@@ -496,13 +496,13 @@ namespace tfv
         {
             const uint32_t want = v.route[v.routeIdx];
             if(std::find(toNode->outgoing.begin(), toNode->outgoing.end(), want) !=
-               toNode->outgoing.end())
+                   toNode->outgoing.end() &&
+               m_roadNetwork->movementAllowed(seg.id, want))
                 return want;
         }
-        // Fallback: the first outgoing that is NOT a U-turn back the way we came (the paired
-        // reverse of a two-way road, or any edge returning to our origin node), so a car
-        // never looks ahead into the oncoming direction. One-way nets have no such edge, so
-        // this returns outgoing[0] exactly as before (digest-neutral).
+        // Fallback: the first outgoing that is a LEGAL movement and NOT a U-turn back the way
+        // we came. One-way nets with no movement table have no U-turn and movementAllowed is
+        // universally true, so this returns outgoing[0] exactly as before (digest-neutral).
         for(uint32_t outId : toNode->outgoing)
         {
             if(seg.pairId != 0 && outId == seg.pairId)
@@ -510,9 +510,11 @@ namespace tfv
             const RoadSegment* o = m_roadNetwork->getSegment(outId);
             if(o && o->oneway == false && o->toNode == seg.fromNode)
                 continue; // a two-way edge returning to our origin node (a U-turn)
+            if(!m_roadNetwork->movementAllowed(seg.id, outId))
+                continue; // illegal turn at this node (permissive when the node has no table)
             return outId;
         }
-        return UINT32_MAX; // only a U-turn available (dead end) => no downstream lookahead
+        return UINT32_MAX; // only a U-turn / illegal movement available => no downstream lookahead
     }
 
     glm::vec2 Simulation::segWorldPos(const RoadSegment& seg, float position, uint8_t laneIndex) const
@@ -885,16 +887,37 @@ namespace tfv
                     if(fromNode && !fromNode->outgoing.empty())
                     {
                         // Deterministic route-following (no RNG): take the route's next
-                        // segment if it is a valid outgoing here, else fall back to outgoing[0].
-                        uint32_t nextSegmentId = fromNode->outgoing[0];
+                        // segment if it is a LEGAL outgoing movement here, else the first
+                        // legal, non-U-turn outgoing. With no movement table and one-way nets,
+                        // movementAllowed is universally true and there is no U-turn, so this
+                        // is byte-identical to the old route-then-outgoing[0] pick.
+                        uint32_t nextSegmentId = fromNode->outgoing[0]; // bad-data anti-deadlock
+                        bool picked = false;
                         if(v.routeIdx < v.route.size())
                         {
                             const uint32_t want = v.route[v.routeIdx];
                             if(std::find(fromNode->outgoing.begin(), fromNode->outgoing.end(),
-                                         want) != fromNode->outgoing.end())
+                                         want) != fromNode->outgoing.end() &&
+                               m_roadNetwork->movementAllowed(segment->id, want))
                             {
                                 nextSegmentId = want;
                                 ++v.routeIdx;
+                                picked = true;
+                            }
+                        }
+                        if(!picked)
+                        {
+                            for(uint32_t outId : fromNode->outgoing)
+                            {
+                                if(segment->pairId != 0 && outId == segment->pairId)
+                                    continue; // paired reverse (U-turn)
+                                const RoadSegment* o = m_roadNetwork->getSegment(outId);
+                                if(o && o->oneway == false && o->toNode == segment->fromNode)
+                                    continue; // two-way edge back to our origin (U-turn)
+                                if(!m_roadNetwork->movementAllowed(segment->id, outId))
+                                    continue; // illegal turn here (permissive when no table)
+                                nextSegmentId = outId;
+                                break;
                             }
                         }
 

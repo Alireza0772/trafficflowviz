@@ -940,6 +940,55 @@ static TwoWayResult twoWayRun()
     return r;
 }
 
+// Gate 17: permitted-movements filter (Phase C1b). A node J has two outgoing branches
+// (a LEFT branch + a STRAIGHT branch); the movement table permits ONLY the straight
+// (10->30). A vehicle routed toward the LEFT branch (illegal) must be diverted onto the
+// legal straight branch, never taking the illegal left.
+static uint32_t movementLegalityRun()
+{
+    RoadNetwork net;
+    Node A, J, L, R;
+    A.id = 1;
+    A.pos = {0, 0};
+    J.id = 2;
+    J.pos = {100, 0};
+    L.id = 3;
+    L.pos = {100, 100}; // left branch endpoint
+    R.id = 4;
+    R.pos = {200, 0}; // straight branch endpoint
+    net.addNode(A);
+    net.addNode(J);
+    net.addNode(L);
+    net.addNode(R);
+    auto seg = [&](uint32_t id, uint32_t from, uint32_t to, glm::vec2 p0, glm::vec2 p1) {
+        RoadSegment s{};
+        s.id = id;
+        s.fromNode = from;
+        s.toNode = to;
+        s.dir = glm::normalize(p1 - p0);
+        s.length = glm::length(p1 - p0);
+        s.lanes = 1;
+        net.addSegment(s);
+    };
+    seg(10, 1, 2, {0, 0}, {100, 0});     // A->J approach (+x)
+    seg(20, 2, 3, {100, 0}, {100, 100}); // J->L LEFT (+y)
+    seg(30, 2, 4, {100, 0}, {200, 0});   // J->R STRAIGHT (+x)
+    net.addMovement(2, Movement{10, 30, TurnType::STRAIGHT}); // only the straight is legal
+
+    Simulation sim(&net);
+    std::vector<Vehicle> v(1);
+    v[0].id = 1;
+    v[0].segmentId = 10;
+    v[0].position = 0.5f;
+    v[0].vel = {10.0f, 0.0f};
+    v[0].route = {20}; // wants the ILLEGAL left turn
+    v[0].routeIdx = 0;
+    sim.initialize(std::move(v));
+    for(int t = 0; t < 400; ++t)
+        sim.update(0.02);
+    return sim.snapshot().at(1).segmentId; // expect 30 (legal straight), never 20
+}
+
 int main(int argc, char** argv)
 {
     bool printOnly = (argc > 1 && std::strcmp(argv[1], "--print-hash") == 0);
@@ -1004,6 +1053,10 @@ int main(int argc, char** argv)
     std::printf("two-way digest = 0x%016llx (paired=%d routed=%d ySep=%.2f finite=%d)\n",
                 (unsigned long long)tw.digest, tw.paired ? 1 : 0, tw.routed ? 1 : 0, tw.ySep,
                 tw.finite ? 1 : 0);
+
+    const uint32_t moveEndSeg = movementLegalityRun();
+    std::printf("movement-legality: routed-illegal-left ended on seg %u (legal straight=30)\n",
+                moveEndSeg);
 
     if(printOnly)
         return 0;
@@ -1279,8 +1332,21 @@ int main(int argc, char** argv)
             ++failures;
         }
     }
+    { // Gate 17: permitted-movements filter diverts an illegal routed turn
+        if(moveEndSeg == 20)
+        {
+            std::printf("FAIL: vehicle took the ILLEGAL left turn (movement filter inactive)\n");
+            ++failures;
+        }
+        else if(moveEndSeg != 30)
+        {
+            std::printf("FAIL: vehicle not diverted onto the legal straight (ended on seg %u)\n",
+                        moveEndSeg);
+            ++failures;
+        }
+    }
 
     if(failures == 0)
-        std::printf("PASS: golden_trajectory (16 gates)\n");
+        std::printf("PASS: golden_trajectory (17 gates)\n");
     return failures == 0 ? 0 : 1;
 }
