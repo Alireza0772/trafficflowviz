@@ -1,4 +1,5 @@
 #include "core/RoadNetwork.hpp"
+#include "core/Configuration.hpp"
 #include "utils/LoggingManager.hpp"
 
 #include <algorithm>
@@ -99,6 +100,7 @@ namespace tfv
             return s.substr(b);
         };
 
+        std::vector<uint32_t> twoWayIds; // forward ids flagged dir=twoway (synthesize reverses)
         std::string first;
         std::getline(file, first); // first line: a `#tfv-roads v2` directive, or the v1 header
         if(trimws(first) == "#tfv-roads v2")
@@ -121,7 +123,8 @@ namespace tfv
                 return -1;
             };
             const int ci_id = colIdx("id"), ci_x1 = colIdx("x1"), ci_y1 = colIdx("y1"),
-                      ci_x2 = colIdx("x2"), ci_y2 = colIdx("y2"), ci_lanes = colIdx("lanes");
+                      ci_x2 = colIdx("x2"), ci_y2 = colIdx("y2"), ci_lanes = colIdx("lanes"),
+                      ci_dir = colIdx("dir");
             if(ci_id < 0 || ci_x1 < 0 || ci_y1 < 0 || ci_x2 < 0 || ci_y2 < 0)
                 LOG_ERROR("[Road] v2 header missing a required column (id,x1,y1,x2,y2)");
             std::string line;
@@ -153,6 +156,8 @@ namespace tfv
                     if(ci_lanes >= 0 && !cell(ci_lanes).empty())
                         lanes = std::stoi(cell(ci_lanes));
                     addRoadRow(segId, rx1, ry1, rx2, ry2, lanes);
+                    if(ci_dir >= 0 && trimws(cell(ci_dir)) == "twoway")
+                        twoWayIds.push_back(segId);
                 }
                 catch(...)
                 {
@@ -185,6 +190,14 @@ namespace tfv
                 addRoadRow(segId, static_cast<int>(x1), static_cast<int>(y1),
                            static_cast<int>(x2), static_cast<int>(y2), lanes);
             }
+        }
+        // Two-way roads (Phase B): synthesize each flagged road's opposing reverse segment.
+        if(!twoWayIds.empty())
+        {
+            const float laneW = TFV_CONFIG().getFloat("sim.lane_width_m", 3.5f);
+            const float medW = TFV_CONFIG().getFloat("sim.median_width_m", 3.5f);
+            for(uint32_t fid : twoWayIds)
+                makeTwoWay(fid, laneW, medW);
         }
         LOG_INFO("loaded {count} segments from {file}", PARAM(count, m_seg.size()),
                  PARAM(file, path.string()));
@@ -330,6 +343,83 @@ namespace tfv
 
             m_seg.push_back(vis);
         }
+    }
+
+    uint32_t RoadNetwork::makeTwoWay(uint32_t forwardId, float laneWidth, float medianWidth)
+    {
+        auto it = m_segments.find(forwardId);
+        if(it == m_segments.end())
+            return 0;
+        if(it->second.pairId != 0)
+            return it->second.pairId; // already two-way
+        // Snapshot the forward values before any insert (which can rehash the map).
+        const uint32_t fFrom = it->second.fromNode, fTo = it->second.toNode;
+        const float fLen = it->second.length;
+        const int fLanes = std::max(1, it->second.lanes);
+        const float fSpeed = it->second.speedLimit;
+        const glm::vec2 fDir = it->second.dir;
+        const float halfMedian =
+            0.5f * static_cast<float>(fLanes) * laneWidth + 0.5f * medianWidth;
+
+        // Fresh reverse id above all current ids (deterministic, collision-checked).
+        uint32_t revId = 1;
+        for(const auto& [id, s] : m_segments)
+        {
+            (void)s;
+            if(id >= revId)
+                revId = id + 1;
+        }
+        while(m_segments.count(revId))
+            ++revId;
+
+        // Mark the forward direction (writes land before the insert below).
+        it->second.oneway = false;
+        it->second.medianOffset = halfMedian;
+        it->second.pairId = revId;
+
+        // Synthesize the opposing reverse directed segment.
+        RoadSegment rev;
+        rev.id = revId;
+        rev.fromNode = fTo;
+        rev.toNode = fFrom;
+        rev.length = fLen;
+        rev.lanes = fLanes;
+        rev.speedLimit = fSpeed;
+        rev.dir = -fDir;
+        rev.oneway = false;
+        // Same magnitude/sign as the forward: the reverse's normal is already flipped
+        // (its dir is negated), so +halfMedian along its own normal lands on the OPPOSITE
+        // side of the road from the forward direction.
+        rev.medianOffset = halfMedian;
+        rev.pairId = forwardId;
+        m_segments[revId] = rev; // may rehash m_segments; do not touch `it` after this
+        m_nodes[rev.fromNode].outgoing.push_back(revId);
+        m_nodes[rev.toNode].incoming.push_back(revId);
+
+        // Reverse visual (swapped endpoints) + tag the forward visual for the renderer.
+        RoadVisual rv{};
+        rv.id = revId;
+        if(const Node* a = getNode(rev.fromNode))
+        {
+            rv.x1 = static_cast<int>(a->pos.x);
+            rv.y1 = static_cast<int>(a->pos.y);
+        }
+        if(const Node* b = getNode(rev.toNode))
+        {
+            rv.x2 = static_cast<int>(b->pos.x);
+            rv.y2 = static_cast<int>(b->pos.y);
+        }
+        rv.length = fLen;
+        rv.medianOffset = halfMedian; // reverse visual's normal is flipped -> opposite side
+        rv.pairId = forwardId;
+        m_seg.push_back(rv);
+        for(auto& vis : m_seg)
+            if(vis.id == forwardId)
+            {
+                vis.medianOffset = halfMedian;
+                vis.pairId = revId;
+            }
+        return revId;
     }
 
     void RoadNetwork::addNode(const Node& node)

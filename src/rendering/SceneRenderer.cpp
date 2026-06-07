@@ -148,10 +148,14 @@ namespace tfv
                 return std::pair<int, int>{static_cast<int>(wx * m_scale) + m_panX,
                                            static_cast<int>(wy * m_scale) + m_panY};
             };
-            auto a1 = toScreen(x1 + nx * half, y1 + ny * half);
-            auto a2 = toScreen(x2 + nx * half, y2 + ny * half);
-            auto b1 = toScreen(x1 - nx * half, y1 - ny * half);
-            auto b2 = toScreen(x2 - nx * half, y2 - ny * half);
+            // Phase B: shift the ribbon to this direction's side of the median (0 = one-way,
+            // so cx==x and the geometry is unchanged).
+            const float cx1 = x1 + nx * s.medianOffset, cy1 = y1 + ny * s.medianOffset;
+            const float cx2 = x2 + nx * s.medianOffset, cy2 = y2 + ny * s.medianOffset;
+            auto a1 = toScreen(cx1 + nx * half, cy1 + ny * half);
+            auto a2 = toScreen(cx2 + nx * half, cy2 + ny * half);
+            auto b1 = toScreen(cx1 - nx * half, cy1 - ny * half);
+            auto b2 = toScreen(cx2 - nx * half, cy2 - ny * half);
 
             // Asphalt ribbon (filled quad a1 -> a2 -> b2 -> b1).
             auto V = [&](std::pair<int, int> p) {
@@ -166,7 +170,7 @@ namespace tfv
             m_r->drawLine(b1.first, b1.second, b2.first, b2.second, 1);
 
             // Dashed centerline ALONG the road (the old code dashed across it).
-            auto cs = toScreen(x1, y1), ce = toScreen(x2, y2);
+            auto cs = toScreen(cx1, cy1), ce = toScreen(cx2, cy2);
             m_r->setColor(m_pal.center.r, m_pal.center.g, m_pal.center.b, 200);
             drawDashedLine(cs.first, cs.second, ce.first, ce.second);
         }

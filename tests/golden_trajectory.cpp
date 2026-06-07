@@ -40,6 +40,7 @@ static constexpr uint64_t kGolden = 0x9cb6732614cb624cULL; // hashes laneIndex (
 static constexpr uint64_t kGoldenMultiLane = 0x9a695a4adfbfd3e7ULL; // Gate 9 overtake
 static constexpr uint64_t kGoldenNN = 0xf164396f8160724dULL;        // Gate 10 NN determinism
 static constexpr uint64_t kGoldenNNPop = 0x8a1cc6b5bd837f1aULL;     // Gate 15 NN bank (population=4)
+static constexpr uint64_t kGoldenTwoWay = 0xf92e9fb995110cc1ULL;   // Gate 16 two-way road
 static constexpr uint64_t kGoldenVtable = 0x626e52c4a6c7691bULL;   // Gate 11 vtable adapter
 static constexpr uint64_t kGoldenTrajectoryCsv = 0x6498c43e5c3ee49cULL; // Gate 12 export CSV
 static constexpr uint64_t kGoldenCrossLane = 0xf61e1bbd64720560ULL; // Gate 14 lane-aware cross-seg
@@ -806,6 +807,100 @@ static CrossLaneResult crossLaneRun()
     return r;
 }
 
+// Gate 16: two-way roads. A one-way segment A->B is made two-way; assert the reverse
+// segment is synthesized + cross-linked, both directions route, the median separates the
+// opposing directions in world space, and a 2-vehicle run is finite + deterministic.
+struct TwoWayResult
+{
+    uint64_t digest{0};
+    float ySep{0.0f};
+    bool paired{false};
+    bool routed{false};
+    bool finite{true};
+};
+static TwoWayResult twoWayRun()
+{
+    RoadNetwork net;
+    Node a, b;
+    a.id = 1;
+    a.pos = {0, 0};
+    b.id = 2;
+    b.pos = {1000, 0};
+    net.addNode(a);
+    net.addNode(b);
+    RoadSegment s{};
+    s.id = 10;
+    s.fromNode = 1;
+    s.toNode = 2;
+    s.dir = {1, 0};
+    s.length = 1000.0f;
+    s.lanes = 1;
+    s.speedLimit = 13.9f;
+    net.addSegment(s);
+    const uint32_t revId = net.makeTwoWay(10, 3.5f, 3.5f); // halfMedian = 0.5*1*3.5 + 0.5*3.5 = 3.5
+
+    TwoWayResult r;
+    const RoadSegment* fwd = net.getSegment(10);
+    const RoadSegment* rev = net.getSegment(revId);
+    r.paired = (revId != 0 && revId != 10 && fwd && rev && fwd->pairId == revId &&
+                rev->pairId == 10 && rev->fromNode == 2 && rev->toNode == 1);
+    r.routed = !net.route(1, 2).empty() && !net.route(2, 1).empty(); // both directions traversable
+
+    Simulation sim(&net);
+    std::vector<Vehicle> v(2);
+    v[0].id = 1;
+    v[0].segmentId = 10;
+    v[0].position = 0.5f;
+    v[0].laneIndex = 0;
+    v[0].vel = {10.0f, 0.0f};
+    v[1].id = 2;
+    v[1].segmentId = revId;
+    v[1].position = 0.5f;
+    v[1].laneIndex = 0;
+    v[1].vel = {10.0f, 0.0f};
+    sim.initialize(std::move(v));
+    {
+        const auto s0 = sim.snapshot();
+        r.ySep = std::fabs(s0.at(1).worldPos.y - s0.at(2).worldPos.y); // ~2*halfMedian = 7
+    }
+    VehicleMap snap;
+    for(int t = 0; t < 60; ++t)
+    {
+        sim.update(0.02);
+        snap = sim.snapshot();
+        for(const auto& [id, vv] : snap)
+        {
+            (void)id;
+            if(!std::isfinite(vv.worldPos.x) || !std::isfinite(vv.worldPos.y))
+                r.finite = false;
+        }
+    }
+    std::vector<uint64_t> ids;
+    for(const auto& [id, vv] : snap)
+    {
+        (void)vv;
+        ids.push_back(id);
+    }
+    std::sort(ids.begin(), ids.end());
+    uint64_t h = 1469598103934665603ULL;
+    auto mix = [&](uint64_t x) {
+        h ^= x;
+        h *= 1099511628211ULL;
+    };
+    for(uint64_t id : ids)
+    {
+        const Vehicle& vv = snap.at(id);
+        const float sp = glm::length(vv.vel);
+        mix(id);
+        mix(vv.segmentId);
+        mix(static_cast<uint64_t>(vv.laneIndex));
+        mix(static_cast<uint64_t>(static_cast<int64_t>(std::llround(vv.position * 1e6))));
+        mix(static_cast<uint64_t>(static_cast<int64_t>(std::llround(sp * 1e3))));
+    }
+    r.digest = h;
+    return r;
+}
+
 int main(int argc, char** argv)
 {
     bool printOnly = (argc > 1 && std::strcmp(argv[1], "--print-hash") == 0);
@@ -865,6 +960,11 @@ int main(int argc, char** argv)
     CrossLaneResult cl = crossLaneRun();
     std::printf("cross-lane digest = 0x%016llx (blockerLane1=%.3f blockerLane0=%.3f)\n",
                 (unsigned long long)cl.digest, cl.blockerInLane1Speed, cl.blockerInLane0Speed);
+
+    TwoWayResult tw = twoWayRun();
+    std::printf("two-way digest = 0x%016llx (paired=%d routed=%d ySep=%.2f finite=%d)\n",
+                (unsigned long long)tw.digest, tw.paired ? 1 : 0, tw.routed ? 1 : 0, tw.ySep,
+                tw.finite ? 1 : 0);
 
     if(printOnly)
         return 0;
@@ -1093,8 +1193,43 @@ int main(int argc, char** argv)
             ++failures;
         }
     }
+    { // Gate 16: two-way road synthesis + median separation + determinism
+        if(!tw.paired)
+        {
+            std::printf("FAIL: two-way reverse segment not synthesized / not cross-linked\n");
+            ++failures;
+        }
+        if(!tw.routed)
+        {
+            std::printf("FAIL: two-way road not routable in both directions\n");
+            ++failures;
+        }
+        if(tw.ySep < 6.0f) // expect ~2*halfMedian = 7
+        {
+            std::printf("FAIL: two-way median did not separate opposing directions (ySep=%.2f)\n",
+                        tw.ySep);
+            ++failures;
+        }
+        if(!tw.finite)
+        {
+            std::printf("FAIL: two-way run produced non-finite state\n");
+            ++failures;
+        }
+        TwoWayResult tw2 = twoWayRun();
+        if(tw.digest != tw2.digest)
+        {
+            std::printf("FAIL: two-way scenario non-deterministic\n");
+            ++failures;
+        }
+        if(kGoldenTwoWay != 0ULL && tw.digest != kGoldenTwoWay)
+        {
+            std::printf("FAIL: two-way digest 0x%016llx != golden 0x%016llx\n",
+                        (unsigned long long)tw.digest, (unsigned long long)kGoldenTwoWay);
+            ++failures;
+        }
+    }
 
     if(failures == 0)
-        std::printf("PASS: golden_trajectory (15 gates)\n");
+        std::printf("PASS: golden_trajectory (16 gates)\n");
     return failures == 0 ? 0 : 1;
 }

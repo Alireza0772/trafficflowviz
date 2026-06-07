@@ -15,7 +15,9 @@ namespace tfv
         uint32_t id; // added id as the first member
         int x1, y1;
         int x2, y2;
-        float length; // pre‑computed pixel length
+        float length;             // pre‑computed pixel length
+        float medianOffset{0.0f}; // Phase B: lateral shift for two-way ribbon rendering
+        uint32_t pairId{0};       // opposing reverse segment id (0 = one-way)
     };
 
     /**
@@ -61,6 +63,12 @@ namespace tfv
 
         /** Add a new segment to the network */
         void addSegment(const RoadSegment& segment);
+
+        /** Convert an existing one-way segment into a two-way road by synthesizing its
+         *  opposing reverse segment (cross-linked via pairId, the two directions shifted
+         *  apart by a median derived from laneWidth + medianWidth). The reverse id is a
+         *  fresh id above all current ids. Returns the reverse id (0 on failure). */
+        uint32_t makeTwoWay(uint32_t forwardId, float laneWidth, float medianWidth);
 
         /** Add a new node to the network */
         void addNode(const Node& node);
