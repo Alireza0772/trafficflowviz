@@ -49,3 +49,27 @@ if(TFV_WITH_PYTHON)
     endif()
     add_test(NAME python_brain_smoke COMMAND tfv_python_smoke)
 endif()
+
+# ONNX Runtime smoke test (only when the backend is compiled in). Same-environment
+# reproducibility -> run-twice-within-process; SKIPs unless TFV_ONNX_TEST_MODEL is set.
+if(TFV_WITH_ONNX)
+    add_executable(tfv_onnx_smoke onnx_brain_smoke.cpp)
+    target_include_directories(tfv_onnx_smoke PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${GLM_INCLUDE_DIRS}
+    )
+    target_link_libraries(tfv_onnx_smoke PRIVATE
+        trafficflowviz_lib
+        ${SDL2_LIBRARIES}
+        ${SDL2_IMAGE_LIBRARIES}
+        ${SDL2_TTF_LIBRARIES}
+    )
+    if(APPLE)
+        target_link_libraries(tfv_onnx_smoke PRIVATE
+            "-framework Metal"
+            "-framework MetalKit"
+            "-framework Cocoa"
+        )
+    endif()
+    add_test(NAME onnx_brain_smoke COMMAND tfv_onnx_smoke)
+endif()

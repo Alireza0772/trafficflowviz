@@ -2,6 +2,7 @@
 
 #include "agents/DllBrain.hpp"
 #include "agents/NNBrain.hpp"
+#include "agents/OnnxBrain.hpp"
 #include "agents/PythonBrain.hpp"
 #include "agents/RuleBasedBrain.hpp"
 #include "core/Configuration.hpp"
@@ -70,6 +71,24 @@ namespace tfv
             if(auto b = loadDllBrain(path, config))
                 return b;
             LOG_WARN("DLL brain load failed; falling back to 'rule'");
+            return std::make_unique<RuleBasedBrain>(idm);
+        }
+
+        // ONNX Runtime: "onnx:<path>[?config]". Split only on the first '?' (the path may
+        // contain ':' and '/'), exactly like the dll: branch.
+        if(kind.rfind("onnx:", 0) == 0)
+        {
+            std::string rest = kind.substr(5);
+            std::string path = rest, config;
+            const auto q = rest.find('?');
+            if(q != std::string::npos)
+            {
+                path = rest.substr(0, q);
+                config = rest.substr(q + 1);
+            }
+            if(auto b = loadOnnxBrain(path, config, idm))
+                return b;
+            LOG_WARN("ONNX brain load failed; falling back to 'rule'");
             return std::make_unique<RuleBasedBrain>(idm);
         }
 

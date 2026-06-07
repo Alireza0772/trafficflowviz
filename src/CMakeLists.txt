@@ -14,6 +14,7 @@ set(TRAFFICFLOWVIZ_SOURCES
     agents/NNBrain.cpp
     agents/DllBrain.cpp
     agents/PythonBrain.cpp
+    agents/OnnxBrain.cpp
 
     # Control
     control/LightController.cpp
@@ -85,6 +86,24 @@ if(TFV_WITH_PYTHON)
     target_link_libraries(trafficflowviz_lib PUBLIC pybind11::embed)
     target_compile_definitions(trafficflowviz_lib PUBLIC TFV_WITH_PYTHON)
     message(STATUS "Embedded Python: linking pybind11::embed (Python3 ${Python3_VERSION})")
+endif()
+
+# ONNX Runtime brain backend (opt-in). OnnxBrain.cpp is always compiled (a
+# dependency-free stub when OFF); enabling links ONNX Runtime. Try the vendor CMake
+# config first (vcpkg / distributions), then fall back to a raw header+lib find.
+if(TFV_WITH_ONNX)
+    # NB: the case difference is deliberate — "onnxruntime" is the vendor CONFIG package
+    # (vcpkg/official), "ONNXRuntime" maps to cmake/FindONNXRuntime.cmake. Do not normalize.
+    find_package(onnxruntime CONFIG QUIET)
+    if(onnxruntime_FOUND)
+        target_link_libraries(trafficflowviz_lib PUBLIC onnxruntime::onnxruntime)
+        message(STATUS "ONNX Runtime: onnxruntime::onnxruntime (CONFIG)")
+    else()
+        find_package(ONNXRuntime REQUIRED) # cmake/FindONNXRuntime.cmake (clean FATAL if missing)
+        target_link_libraries(trafficflowviz_lib PUBLIC ONNXRuntime::ONNXRuntime)
+        message(STATUS "ONNX Runtime: ONNXRuntime::ONNXRuntime (module find)")
+    endif()
+    target_compile_definitions(trafficflowviz_lib PUBLIC TFV_WITH_ONNX)
 endif()
 
 # Print include directories for this target

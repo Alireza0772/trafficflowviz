@@ -17,6 +17,10 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 # Build options
 option(TFV_BUILD_PYTHON "Build Python bindings" ON)
 option(TFV_WITH_PYTHON "Embed CPython for python:<module> brains" OFF)
+option(TFV_WITH_ONNX "Use ONNX Runtime for onnx:<path> brains" OFF)
+
+# Custom find modules (e.g. FindONNXRuntime for raw header+lib ORT installs).
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 option(TFV_USE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
 option(TFV_ENABLE_DOCS "Build documentation with Doxygen" OFF)
 option(TFV_ENABLE_TESTING "Build unit tests" ON)
@@ -29,6 +33,7 @@ endif()
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "Python bindings: ${TFV_BUILD_PYTHON}")
 message(STATUS "Embedded Python brains (TFV_WITH_PYTHON): ${TFV_WITH_PYTHON}")
+message(STATUS "ONNX Runtime brains (TFV_WITH_ONNX): ${TFV_WITH_ONNX}")
 message(STATUS "Sanitizers: ${TFV_USE_SANITIZERS}")
 message(STATUS "Documentation: ${TFV_ENABLE_DOCS}")
 message(STATUS "Testing: ${TFV_ENABLE_TESTING}")
