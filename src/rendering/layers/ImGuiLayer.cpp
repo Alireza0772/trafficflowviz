@@ -190,8 +190,8 @@ namespace tfv
                 if(m_exportToggleCallback)
                 {
                     bool exporting = m_exportEnabled;
-                    if(ImGui::MenuItem(exporting ? "Stop Export" : "Export Trajectory", "E",
-                                       &exporting))
+                    if(ImGui::MenuItem(exporting ? "Stop Export" : "Export Trajectory", nullptr,
+                                       &exporting)) // menu-only; no key handler bound
                     {
                         m_exportEnabled = exporting;
                         m_exportToggleCallback(m_exportEnabled);
@@ -216,9 +216,9 @@ namespace tfv
                     m_showKeybindings = keybindings;
                 }
 
-                // Toggle the vehicle inspector
+                // Toggle the vehicle inspector (menu-only; 'I' is the global ImGui toggle)
                 bool inspector = m_showInspector;
-                if(ImGui::MenuItem("Vehicle Inspector", "I", &inspector))
+                if(ImGui::MenuItem("Vehicle Inspector", nullptr, &inspector))
                 {
                     m_showInspector = inspector;
                 }
@@ -227,7 +227,7 @@ namespace tfv
                 if(m_debugPerceptionLayer)
                 {
                     bool overlay = m_debugPerceptionLayer->isEnabled();
-                    if(ImGui::MenuItem("Perception Overlay", "P", &overlay))
+                    if(ImGui::MenuItem("Perception Overlay", nullptr, &overlay)) // menu-only
                         m_debugPerceptionLayer->setEnabled(overlay);
                 }
 

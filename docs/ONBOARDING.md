@@ -71,9 +71,9 @@ ctest --test-dir build -R golden_trajectory
 | `S`                                     | Save a screenshot (`trafficviz_<unixtime>.png`)                 |
 | `Esc`                                   | Quit                                                            |
 
-> **Note:** The `E` (Export) and `P` (Perception Overlay) letters shown in menus are display labels only — there is **no** key handler for them. Use the menu items instead (below). The `Heatmap` View-menu item is a no-op stub; toggle the heatmap with the `H` key.
+> **Note:** Export, Vehicle Inspector, and Perception Overlay are **menu-only** (no keyboard shortcut). `I` is the global "toggle the whole ImGui interface" key — *not* the inspector. The `Heatmap` View-menu item is a no-op stub; toggle the heatmap with the `H` key.
 
-Menus: **File** (Export Trajectory / Stop Export, Exit), **View** (Keybindings `K`, Vehicle Inspector `I`, Perception Overlay, Simulation Layer, Heatmap), **Recording** (Start/Stop Recording `R` → `output.mp4` @ 30 fps, Take Screenshot `S` → `screenshot.png`).
+Menus: **File** (Export Trajectory / Stop Export, Exit), **View** (Keybindings `K`, Vehicle Inspector, Perception Overlay, Simulation Layer, Heatmap), **Recording** (Start/Stop Recording `R` → `output.mp4` @ 30 fps, Take Screenshot `S` → `screenshot.png`).
 
 ### 60-second first look
 
@@ -282,7 +282,7 @@ Export a model with **exactly one** float32 input `[N, 24]` (dynamic batch) and 
 
 ## 6. Observe
 
-### Vehicle Inspector (View → Vehicle Inspector, `I` in the View menu)
+### Vehicle Inspector (View → Vehicle Inspector)
 
 With a vehicle selected it shows:
 
@@ -296,7 +296,7 @@ If nothing is selected it prompts you to click a vehicle; if the selected vehicl
 
 ### Perception Overlay (View → Perception Overlay)
 
-Draws each vehicle's sensing ranges/sectors in scene space — the visual counterpart to the Inspector's textual readout. Toggle via the menu item (the `P` label is not a live key).
+Draws each vehicle's sensing ranges/sectors in scene space — the visual counterpart to the Inspector's textual readout. Toggle via the menu item (no keyboard shortcut).
 
 ### Heatmap (`H`)
 
@@ -367,4 +367,4 @@ The simulation advances on a **fixed timestep** with **seeded** weight/RNG strea
 - **My brain isn't running (looks like plain IDM):** it fell back to `rule`. Check the log for a `LOG_WARN` — common causes: unknown `sim.default_brain` kind, NN `layers` not starting at 24 / ending at 4, a failed `dll:`/`python:`/`onnx:` load, or ABI/tensor-shape mismatch.
 - **Headless can't find inputs:** `tfv_headless` needs the data dir reachable from its working directory (or set `paths.data_dir` / `TFV_DATA_DIR`). Its `export.dir` defaults to `.` — files land in the current directory unless you pass `--export-dir=...`.
 - **`final_state_digest` differs across machines:** expected. Determinism is **same-build only**; a different compiler, flags, platform, or library version can change low bits. Reproduce on the same binary.
-- **`E` / `P` keys do nothing:** by design — those are menu labels, not key handlers. Use **File → Export Trajectory** and **View → Perception Overlay**.
+- **No keyboard shortcut for Export / Inspector / Overlay:** by design — they're menu-only (**File → Export Trajectory**, **View → Vehicle Inspector / Perception Overlay**). Note `I` toggles the *entire* ImGui interface.
