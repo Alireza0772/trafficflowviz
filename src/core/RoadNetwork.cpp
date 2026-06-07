@@ -41,79 +41,140 @@ namespace tfv
             return false;
         }
 
-        std::string line;
-        std::getline(file, line); // skip header
-
         uint32_t nextNodeId = 1; // Start node IDs at 1
         std::unordered_map<std::pair<int, int>, uint32_t, pair_hash>
             nodeMap; // Map positions to node IDs
-
-        // Helper to create a hash for a pair
         auto makeCoordPair = [](int x, int y) -> std::pair<int, int> { return {x, y}; };
 
-        while(std::getline(file, line))
-        {
-            std::stringstream ss(line);
+        // Build all entities for one road row. SHARED by the v1 (positional) and v2
+        // (named-column) parsers, so the two formats are byte-identical for the same data.
+        auto addRoadRow = [&](uint32_t segId, int rx1, int ry1, int rx2, int ry2, int lanes) {
             RoadVisual r{};
-            char comma;
-
-            // Coordinates are floats in the CSV (e.g. 541.42). Parse as float and
-            // truncate to the int pixel fields — reading floats straight into int
-            // via >> stops at the '.', corrupting every later coordinate.
-            uint32_t segId;
-            float x1 = 0, y1 = 0, x2 = 0, y2 = 0;
-            ss >> segId >> comma >> x1 >> comma >> y1 >> comma >> x2 >> comma >> y2;
             r.id = segId;
-            r.x1 = static_cast<int>(x1);
-            r.y1 = static_cast<int>(y1);
-            r.x2 = static_cast<int>(x2);
-            r.y2 = static_cast<int>(y2);
+            r.x1 = rx1;
+            r.y1 = ry1;
+            r.x2 = rx2;
+            r.y2 = ry2;
+            float dx = static_cast<float>(r.x2 - r.x1);
+            float dy = static_cast<float>(r.y2 - r.y1);
+            r.length = std::sqrtf(dx * dx + dy * dy);
+            m_seg.emplace_back(r);
 
-            if(ss)
+            auto fromPos = makeCoordPair(r.x1, r.y1);
+            auto toPos = makeCoordPair(r.x2, r.y2);
+            if(nodeMap.find(fromPos) == nodeMap.end())
             {
-                // compute pixel length once
-                float dx = static_cast<float>(r.x2 - r.x1);
-                float dy = static_cast<float>(r.y2 - r.y1);
-                r.length = std::sqrtf(dx * dx + dy * dy);
-                m_seg.emplace_back(r);
+                nodeMap[fromPos] = nextNodeId++;
+                Node node;
+                node.id = nodeMap[fromPos];
+                node.pos = {static_cast<float>(r.x1), static_cast<float>(r.y1)};
+                m_nodes[node.id] = node;
+            }
+            if(nodeMap.find(toPos) == nodeMap.end())
+            {
+                nodeMap[toPos] = nextNodeId++;
+                Node node;
+                node.id = nodeMap[toPos];
+                node.pos = {static_cast<float>(r.x2), static_cast<float>(r.y2)};
+                m_nodes[node.id] = node;
+            }
+            RoadSegment segment;
+            segment.id = segId;
+            segment.fromNode = nodeMap[fromPos];
+            segment.toNode = nodeMap[toPos];
+            segment.length = r.length;
+            segment.dir = glm::normalize(glm::vec2(r.x2 - r.x1, r.y2 - r.y1));
+            segment.lanes = (lanes >= 1) ? lanes : 1;
+            m_segments[segId] = segment;
+            m_nodes[segment.fromNode].outgoing.push_back(segId);
+            m_nodes[segment.toNode].incoming.push_back(segId);
+        };
 
-                // Create nodes if they don't exist yet
-                auto fromPos = makeCoordPair(r.x1, r.y1);
-                auto toPos = makeCoordPair(r.x2, r.y2);
+        auto trimws = [](std::string s) {
+            while(!s.empty() && (s.back() == '\r' || s.back() == ' ' || s.back() == '\t'))
+                s.pop_back();
+            std::size_t b = 0;
+            while(b < s.size() && (s[b] == ' ' || s[b] == '\t'))
+                ++b;
+            return s.substr(b);
+        };
 
-                if(nodeMap.find(fromPos) == nodeMap.end())
+        std::string first;
+        std::getline(file, first); // first line: a `#tfv-roads v2` directive, or the v1 header
+        if(trimws(first) == "#tfv-roads v2")
+        {
+            // v2: named-column format. The next line is the header; columns are located by
+            // NAME, so later phases can add columns (dir/turn/curve...) in any order.
+            std::string header;
+            std::getline(file, header);
+            std::vector<std::string> cols;
+            {
+                std::stringstream hs(header);
+                std::string c;
+                while(std::getline(hs, c, ','))
+                    cols.push_back(trimws(c));
+            }
+            auto colIdx = [&](const std::string& name) {
+                for(std::size_t i = 0; i < cols.size(); ++i)
+                    if(cols[i] == name)
+                        return static_cast<int>(i);
+                return -1;
+            };
+            const int ci_id = colIdx("id"), ci_x1 = colIdx("x1"), ci_y1 = colIdx("y1"),
+                      ci_x2 = colIdx("x2"), ci_y2 = colIdx("y2"), ci_lanes = colIdx("lanes");
+            if(ci_id < 0 || ci_x1 < 0 || ci_y1 < 0 || ci_x2 < 0 || ci_y2 < 0)
+                LOG_ERROR("[Road] v2 header missing a required column (id,x1,y1,x2,y2)");
+            std::string line;
+            while((ci_id >= 0 && ci_x1 >= 0 && ci_y1 >= 0 && ci_x2 >= 0 && ci_y2 >= 0) &&
+                  std::getline(file, line))
+            {
+                if(trimws(line).empty())
+                    continue;
+                std::vector<std::string> f;
                 {
-                    nodeMap[fromPos] = nextNodeId++;
-
-                    // Create the node entity
-                    Node node;
-                    node.id = nodeMap[fromPos];
-                    node.pos = {static_cast<float>(r.x1), static_cast<float>(r.y1)};
-                    m_nodes[node.id] = node;
+                    std::stringstream rs(line);
+                    std::string c;
+                    while(std::getline(rs, c, ','))
+                        f.push_back(c);
                 }
-
-                if(nodeMap.find(toPos) == nodeMap.end())
+                auto cell = [&](int idx) -> std::string {
+                    return (idx >= 0 && idx < static_cast<int>(f.size()))
+                               ? f[static_cast<std::size_t>(idx)]
+                               : std::string();
+                };
+                try
                 {
-                    nodeMap[toPos] = nextNodeId++;
-
-                    // Create the node entity
-                    Node node;
-                    node.id = nodeMap[toPos];
-                    node.pos = {static_cast<float>(r.x2), static_cast<float>(r.y2)};
-                    m_nodes[node.id] = node;
+                    const uint32_t segId = static_cast<uint32_t>(std::stoul(cell(ci_id)));
+                    const int rx1 = static_cast<int>(std::stof(cell(ci_x1)));
+                    const int ry1 = static_cast<int>(std::stof(cell(ci_y1)));
+                    const int rx2 = static_cast<int>(std::stof(cell(ci_x2)));
+                    const int ry2 = static_cast<int>(std::stof(cell(ci_y2)));
+                    int lanes = 1;
+                    if(ci_lanes >= 0 && !cell(ci_lanes).empty())
+                        lanes = std::stoi(cell(ci_lanes));
+                    addRoadRow(segId, rx1, ry1, rx2, ry2, lanes);
                 }
-
-                // Create the road segment entity
-                RoadSegment segment;
-                segment.id = segId;
-                segment.fromNode = nodeMap[fromPos];
-                segment.toNode = nodeMap[toPos];
-                segment.length = r.length;
-
-                // Calculate direction vector
-                segment.dir = glm::normalize(glm::vec2(r.x2 - r.x1, r.y2 - r.y1));
-
-                // Optional trailing 'lanes' column (default 1; keeps 5-column CSVs valid).
+                catch(...)
+                {
+                    continue; // skip a malformed row
+                }
+            }
+        }
+        else
+        {
+            // v1: positional id,x1,y1,x2,y2[,lanes]. `first` was the header (skipped).
+            // Coordinates are floats (e.g. 541.42) truncated to the int pixel fields —
+            // reading a float straight into an int via >> stops at the '.'.
+            std::string line;
+            while(std::getline(file, line))
+            {
+                std::stringstream ss(line);
+                char comma;
+                uint32_t segId;
+                float x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+                ss >> segId >> comma >> x1 >> comma >> y1 >> comma >> x2 >> comma >> y2;
+                if(!ss)
+                    continue;
                 int lanes = 1;
                 {
                     char c2;
@@ -121,14 +182,8 @@ namespace tfv
                     if(ss >> c2 >> L && L >= 1)
                         lanes = L;
                 }
-                segment.lanes = lanes;
-
-                // Add to segment map
-                m_segments[segId] = segment;
-
-                // Update node adjacency (single source of truth for routing + signals)
-                m_nodes[segment.fromNode].outgoing.push_back(segId);
-                m_nodes[segment.toNode].incoming.push_back(segId);
+                addRoadRow(segId, static_cast<int>(x1), static_cast<int>(y1),
+                           static_cast<int>(x2), static_cast<int>(y2), lanes);
             }
         }
         LOG_INFO("loaded {count} segments from {file}", PARAM(count, m_seg.size()),
