@@ -167,7 +167,10 @@ namespace tfv
             float sp = glm::length(v.vel);
             v.vel = segment->dir * sp;
             v.worldPos = segWorldPos(*segment, v.position, v.laneIndex);
-            v.heading = std::atan2(segment->dir.y, segment->dir.x);
+            {
+                const glm::vec2 t = segment->geometry().tangentAt(v.position * segment->length);
+                v.heading = std::atan2(t.y, t.x);
+            }
             segment->vehicleCount++;
             updateCongestion(v.segmentId);
 
@@ -505,14 +508,16 @@ namespace tfv
         if(m_roadNetwork)
             if(const Node* n = m_roadNetwork->getNode(seg.fromNode))
                 base = n->pos;
-        glm::vec2 p = base + seg.dir * (position * seg.length);
+        // Route through the SegmentGeometry seam (straight today; curves in Phase E).
+        const SegmentGeometry geom = seg.geometry();
+        const float arc = position * seg.length;
+        glm::vec2 p = base + geom.offsetAt(arc);
         const int laneCount = std::max(1, seg.lanes);
         if(laneCount > 1) // single-lane stays on the centerline (byte-identical to Phase 5)
         {
             const float off =
                 (static_cast<float>(laneIndex) - (laneCount - 1) * 0.5f) * m_laneWidth;
-            const glm::vec2 normal(-seg.dir.y, seg.dir.x); // matches RoadRenderer (SDL y-down)
-            p += normal * off;
+            p += geom.normalAt(arc) * off; // matches RoadRenderer (SDL y-down)
         }
         return p;
     }
@@ -926,7 +931,8 @@ namespace tfv
                 if(auto* cur = m_roadNetwork->getSegment(v.segmentId))
                 {
                     v.worldPos = segWorldPos(*cur, v.position, v.laneIndex);
-                    v.heading = std::atan2(cur->dir.y, cur->dir.x);
+                    const glm::vec2 t = cur->geometry().tangentAt(v.position * cur->length);
+                    v.heading = std::atan2(t.y, t.x);
                 }
             }
 
@@ -1188,7 +1194,9 @@ namespace tfv
                 if(Vehicle* stored = m_world.find(v.id))
                 {
                     stored->worldPos = segWorldPos(*segment, stored->position, stored->laneIndex);
-                    stored->heading = std::atan2(segment->dir.y, segment->dir.x);
+                    const glm::vec2 t =
+                        segment->geometry().tangentAt(stored->position * segment->length);
+                    stored->heading = std::atan2(t.y, t.x);
                 }
             }
         }

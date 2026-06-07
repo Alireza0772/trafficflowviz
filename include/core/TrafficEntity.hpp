@@ -97,6 +97,22 @@ namespace tfv
     };
 
     // Road segment (edge in the road network)
+    // Geometry of a road segment, abstracted behind offset/tangent/normal so curved roads
+    // can be added later (Phase E) without touching the movement/heading call sites. The
+    // straight implementation here is the LITERAL pre-abstraction arithmetic
+    // (base + dir*arc, constant tangent/normal), so routing movement through it is
+    // byte-identical and the pinned golden digests do not move.
+    struct SegmentGeometry
+    {
+        glm::vec2 dir{1.0f, 0.0f}; // unit travel direction
+        float length{0.0f};        // arc length (meters)
+
+        // Offset from the segment origin (the fromNode position) at arc-length `s`.
+        glm::vec2 offsetAt(float s) const { return dir * s; }
+        glm::vec2 tangentAt(float /*s*/) const { return dir; }
+        glm::vec2 normalAt(float /*s*/) const { return glm::vec2(-dir.y, dir.x); }
+    };
+
     struct RoadSegment
     {
         uint32_t id;                 // Unique identifier
@@ -113,6 +129,9 @@ namespace tfv
         // Phase 3 (forward-compatible; empty => fall back to the `lanes` count)
         std::vector<Lane> laneDefs;    // explicit lane definitions (empty => use `lanes` count)
         std::vector<uint32_t> signIds; // signs governing this segment
+
+        // Geometry seam (Phase A). Straight today; Phase E returns a stored curve geom.
+        SegmentGeometry geometry() const { return SegmentGeometry{dir, length}; }
     };
 
     // Node in the road network (intersection)
