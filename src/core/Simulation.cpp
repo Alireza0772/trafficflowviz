@@ -512,13 +512,14 @@ namespace tfv
         const SegmentGeometry geom = seg.geometry();
         const float arc = position * seg.length;
         glm::vec2 p = base + geom.offsetAt(arc);
+        // Lateral shift = direction-separating median (Phase B) + lane offset. One-way
+        // single-lane roads have medianOffset==0 and laneCount==1 => lat==0 => byte-identical.
+        float lat = seg.medianOffset;
         const int laneCount = std::max(1, seg.lanes);
-        if(laneCount > 1) // single-lane stays on the centerline (byte-identical to Phase 5)
-        {
-            const float off =
-                (static_cast<float>(laneIndex) - (laneCount - 1) * 0.5f) * m_laneWidth;
-            p += geom.normalAt(arc) * off; // matches RoadRenderer (SDL y-down)
-        }
+        if(laneCount > 1)
+            lat += (static_cast<float>(laneIndex) - (laneCount - 1) * 0.5f) * m_laneWidth;
+        if(lat != 0.0f)
+            p += geom.normalAt(arc) * lat; // matches RoadRenderer (SDL y-down)
         return p;
     }
 

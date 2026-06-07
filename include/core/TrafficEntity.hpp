@@ -130,6 +130,14 @@ namespace tfv
         std::vector<Lane> laneDefs;    // explicit lane definitions (empty => use `lanes` count)
         std::vector<uint32_t> signIds; // signs governing this segment
 
+        // Directionality (Phase B). The defaults (oneway, no pair, zero median) leave every
+        // existing road byte-identical. A two-way road is authored as ONE segment plus an
+        // auto-synthesized reverse segment (cross-linked via pairId); each direction is
+        // shifted laterally by medianOffset so opposing traffic never overlaps.
+        bool oneway{true};
+        uint32_t pairId{0};       // opposing reverse segment id (0 = none)
+        float medianOffset{0.0f}; // lateral shift of this direction's centerline (meters)
+
         // Geometry seam (Phase A). Straight today; Phase E returns a stored curve geom.
         SegmentGeometry geometry() const { return SegmentGeometry{dir, length}; }
     };
