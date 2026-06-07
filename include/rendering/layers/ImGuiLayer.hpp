@@ -51,6 +51,11 @@ namespace tfv
         using AlertUICallback = std::function<void(const std::string& message, uint32_t segmentId)>;
         void setAlertCallback(AlertUICallback callback) { m_alertUICallback = callback; }
 
+        // Start/stop trajectory+metrics export (the Engine owns the exporters).
+        using ExportToggleCallback = std::function<void(bool)>;
+        void setExportToggleCallback(ExportToggleCallback cb) { m_exportToggleCallback = std::move(cb); }
+        void setExportActive(bool active) { m_exportEnabled = active; } // reflect engine state
+
       private:
         SDL_Window* m_window;
         SDL_Renderer* m_renderer;
@@ -67,6 +72,8 @@ namespace tfv
         bool m_initialized{false};
         bool m_showKeybindings{false};
         bool m_showInspector{false};
+        bool m_exportEnabled{false};
+        ExportToggleCallback m_exportToggleCallback;
 
         // FPS tracking
         int m_fps{0};

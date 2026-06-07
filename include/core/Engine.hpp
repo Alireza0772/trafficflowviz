@@ -32,6 +32,9 @@ namespace tfv
     // Alert callback
     using AlertUICallback = std::function<void(const std::string& message, uint32_t segmentId)>;
 
+    class TrajectoryExporter; // io/ — owned via unique_ptr (dtor defined in Engine.cpp)
+    class MetricsExporter;
+
     class Engine
     {
       public:
@@ -112,6 +115,17 @@ namespace tfv
 
         // Layers
         LayerStack m_layerStack;
+        // Trajectory/metrics export (Phase 7 GUI toggle). Driven after each sim step
+        // when active; OFF by default so the loop is byte-identical when not exporting.
+        void toggleExport(bool enable);
+        void writeExportManifest();
+        bool m_exportEnabled{false};
+        std::unique_ptr<TrajectoryExporter> m_trajExporter;
+        std::unique_ptr<MetricsExporter> m_metricsExporter;
+        std::string m_exportDir;
+        int m_exportEveryN{1};
+        uint64_t m_exportStartTick{0};
+
         std::shared_ptr<SimulationLayer> m_simulationLayer;
         std::shared_ptr<HeatmapLayer> m_heatmapLayer;
         std::shared_ptr<DebugPerceptionLayer> m_debugPerceptionLayer;

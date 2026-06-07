@@ -83,6 +83,8 @@ target_include_directories(trafficflowviz_lib PUBLIC
     ${CMAKE_SOURCE_DIR}/include
     ${GLM_INCLUDE_DIRS}
 )
+# Git SHA for the GUI export manifest (Engine.cpp); degrades to "unknown" via #ifndef.
+target_compile_definitions(trafficflowviz_lib PRIVATE TFV_GIT_SHA="${TFV_GIT_SHA}")
 
 # Embedded-Python brain backend (opt-in). PythonBrain.cpp is always compiled (a
 # dependency-free stub when OFF); enabling links an embedded CPython interpreter.

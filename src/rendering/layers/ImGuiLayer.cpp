@@ -186,6 +186,17 @@ namespace tfv
         {
             if(ImGui::BeginMenu("File"))
             {
+                // Start/stop trajectory + metrics export to files.
+                if(m_exportToggleCallback)
+                {
+                    bool exporting = m_exportEnabled;
+                    if(ImGui::MenuItem(exporting ? "Stop Export" : "Export Trajectory", "E",
+                                       &exporting))
+                    {
+                        m_exportEnabled = exporting;
+                        m_exportToggleCallback(m_exportEnabled);
+                    }
+                }
                 if(ImGui::MenuItem("Exit", "Esc"))
                 {
                     // Request application shutdown

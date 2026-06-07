@@ -6,18 +6,62 @@
 
 #include "alerts/AlertManager.hpp"
 #include "data/CSVLoader.hpp"
+#include "io/MetricsExporter.hpp"
+#include "io/RunManifest.hpp"
+#include "io/TrajectoryExporter.hpp"
 #include "recording/RecordingManager.hpp"
 #include "rendering/layers/HeatmapLayer.hpp"
 #include "rendering/layers/ImGuiLayer.hpp"
 #include "rendering/layers/SimulationLayer.hpp"
 #include "utils/LoggingManager.hpp"
+#include <algorithm>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <glm/glm.hpp>
 #include <imgui.h>
+#include <vector>
 
 // Include SDL only for event handling - will be abstracted in future updates
 #include <SDL2/SDL.h>
 
+#ifndef TFV_GIT_SHA
+#define TFV_GIT_SHA "unknown"
+#endif
+
 namespace tfv
 {
+    namespace
+    {
+        // FNV-1a over the final state — BYTE-IDENTICAL to headless_runner.cpp's
+        // stateDigest(), so a GUI-exported run's manifest digest matches a headless one.
+        uint64_t exportStateDigest(const VehicleMap& snap)
+        {
+            std::vector<uint64_t> ids;
+            for(const auto& [id, v] : snap)
+            {
+                (void)v;
+                ids.push_back(id);
+            }
+            std::sort(ids.begin(), ids.end());
+            uint64_t h = 1469598103934665603ULL;
+            auto mix = [&](uint64_t x) {
+                h ^= x;
+                h *= 1099511628211ULL;
+            };
+            for(uint64_t id : ids)
+            {
+                const Vehicle& v = snap.at(id);
+                const float sp = glm::length(v.vel);
+                mix(id);
+                mix(v.segmentId);
+                mix(static_cast<uint64_t>(v.laneIndex));
+                mix(static_cast<uint64_t>(static_cast<int64_t>(std::llround(v.position * 1e6))));
+                mix(static_cast<uint64_t>(static_cast<int64_t>(std::llround(sp * 1e3))));
+            }
+            return h;
+        }
+    } // namespace
 
     Engine::Engine()
     {
@@ -25,6 +69,10 @@ namespace tfv
 
     Engine::~Engine()
     {
+        // Flush a final manifest if a run was still exporting at shutdown.
+        if(m_exportEnabled)
+            toggleExport(false);
+
         // Clean up in reverse order of creation
         m_layerStack.clear();
         m_simulationLayer.reset();
@@ -167,9 +215,23 @@ namespace tfv
             m_imguiLayer->setAlertManager(m_alertManager.get());
             m_imguiLayer->setRecordingManager(m_recordingManager.get());
             m_imguiLayer->showKeybindingsWindow(m_showKeybindings);
+            m_imguiLayer->setExportToggleCallback([this](bool e) {
+                toggleExport(e);
+                if(m_imguiLayer) // keep the menu label in sync even if start failed-soft
+                    m_imguiLayer->setExportActive(m_exportEnabled);
+            });
 
             m_layerStack.pushLayer(m_imguiLayer);
             m_imguiLayer->setEnabled(m_imguiEnabled);
+        }
+
+        // Optional: auto-start export for the whole GUI run (config-driven; default off).
+        m_exportEveryN = std::max(1, TFV_CONFIG().getInt("sim.export.every_n", 1));
+        if(TFV_CONFIG().getInt("sim.export.enabled", 0) != 0)
+        {
+            toggleExport(true);
+            if(m_imguiLayer)
+                m_imguiLayer->setExportActive(m_exportEnabled);
         }
 
         m_initialized = true;
@@ -288,6 +350,17 @@ namespace tfv
             m_sim.update(m_fixedDt);
             m_accumulator -= m_fixedDt;
             ++m_tick;
+            // Trajectory/metrics export (read-only; only when active). Sample AFTER the
+            // sim step with a 0-based tick RELATIVE to export start (et=0,1,2,...), so a
+            // from-start GUI export byte-matches the headless runner's cadence + every_n
+            // decimation phase (which also uses 0-based t).
+            if(m_exportEnabled && m_trajExporter)
+            {
+                const uint64_t et = (m_tick - 1) - m_exportStartTick;
+                const double simTime = static_cast<double>(et) * m_fixedDt;
+                m_trajExporter->sample(et, simTime, m_sim);
+                m_metricsExporter->sample(et, simTime, m_sim);
+            }
         }
 
         // LiveFeed ingest (Phase 6) and AlertManager update hooks are not yet
@@ -297,6 +370,83 @@ namespace tfv
         m_layerStack.onUpdate(dt);
 
         m_t += dt;
+    }
+
+    void Engine::toggleExport(bool enable)
+    {
+        if(enable == m_exportEnabled)
+            return; // no-op on double-start / stop-without-start
+        if(enable)
+        {
+            std::time_t t = std::time(nullptr);
+            char ts[32];
+            std::strftime(ts, sizeof(ts), "run_%Y%m%d_%H%M%S", std::gmtime(&t));
+            const std::string base = TFV_CONFIG().getString("export.dir", "output");
+            m_exportDir = (std::filesystem::path(base) / ts).string();
+            std::error_code ec;
+            std::filesystem::create_directories(m_exportDir, ec);
+            if(ec)
+            {
+                LOG_ERROR("[export] cannot create {dir}: {e}", PARAM(dir, m_exportDir),
+                          PARAM(e, ec.message()));
+                m_exportDir.clear();
+                return; // fail-soft: stay disabled
+            }
+            m_trajExporter = std::make_unique<TrajectoryExporter>(
+                (std::filesystem::path(m_exportDir) / "trajectory.csv").string(), m_exportEveryN);
+            m_metricsExporter = std::make_unique<MetricsExporter>(
+                (std::filesystem::path(m_exportDir) / "metrics.csv").string(), m_exportEveryN);
+            if(!m_trajExporter->ok() || !m_metricsExporter->ok())
+            {
+                LOG_ERROR("[export] could not open output files in {dir}", PARAM(dir, m_exportDir));
+                m_trajExporter.reset();
+                m_metricsExporter.reset();
+                m_exportDir.clear();
+                return;
+            }
+            m_exportStartTick = m_tick;
+            m_exportEnabled = true;
+            LOG_INFO("[export] started -> {dir}", PARAM(dir, m_exportDir));
+        }
+        else
+        {
+            writeExportManifest();
+            m_trajExporter.reset();
+            m_metricsExporter.reset();
+            m_exportEnabled = false;
+            LOG_INFO("[export] stopped ({dir})", PARAM(dir, m_exportDir));
+        }
+    }
+
+    void Engine::writeExportManifest()
+    {
+        if(m_exportDir.empty())
+            return;
+        auto& cfg = TFV_CONFIG();
+        RunManifest m;
+        m.masterSeed = cfg.getMasterSeed();
+        m.brainKind = m_sim.brainKind();
+        m.brainWeightsHash = m_sim.brainWeightsHash();
+        m.cityFile = cfg.getString("data.city_file", "");
+        m.vehiclesFile = cfg.getString("data.vehicles_file", "");
+        m.signsFile = cfg.getString("data.signs_file", "");
+        m.vehicleCount = m_sim.vehicleCount();
+        m.decisionHz = cfg.getFloat("perf.decision_hz", 10.0f);
+        m.fixedDt = m_fixedDt;
+        m.totalTicks = m_tick - m_exportStartTick;
+        m.exportEveryN = m_exportEveryN;
+        m.gitSha = TFV_GIT_SHA;
+        char ts[32];
+        std::time_t tt = std::time(nullptr);
+        std::strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", std::gmtime(&tt));
+        m.wallClockUtc = ts; // never hashed
+        m.finalStateDigest = exportStateDigest(m_sim.snapshot());
+        for(const auto& [k, v] : cfg.snapshot("sim."))
+            m.configSnapshot[k] = v;
+        for(const auto& [k, v] : cfg.snapshot("perf."))
+            m.configSnapshot[k] = v;
+        std::ofstream mf((std::filesystem::path(m_exportDir) / "manifest.json").string());
+        m.write(mf);
     }
 
     void Engine::render()
