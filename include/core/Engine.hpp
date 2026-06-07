@@ -21,6 +21,7 @@
 #include "network/LiveFeed.hpp"
 #include "recording/RecordingManager.hpp"
 #include "rendering/Renderer.hpp"
+#include "rendering/layers/DebugPerceptionLayer.hpp"
 #include "rendering/layers/HeatmapLayer.hpp"
 #include "rendering/layers/ImGuiLayer.hpp"
 #include "rendering/layers/SimulationLayer.hpp"
@@ -113,6 +114,7 @@ namespace tfv
         LayerStack m_layerStack;
         std::shared_ptr<SimulationLayer> m_simulationLayer;
         std::shared_ptr<HeatmapLayer> m_heatmapLayer;
+        std::shared_ptr<DebugPerceptionLayer> m_debugPerceptionLayer;
         std::shared_ptr<ImGuiLayer> m_imguiLayer;
 
         // data paths (set by configuration)

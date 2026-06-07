@@ -111,6 +111,9 @@ namespace tfv
         // signalized node they may be one tick ahead of the decision's inputs.
         VehicleInspection inspect(uint64_t id) const;
 
+        /** Perception FOV params (for the debug overlay). */
+        PerceptionParams perceptionParams() const { return m_perceptionParams; }
+
         // Test-only: swap the decision brain after initialize() (does not reset it).
         void setBrainForTest(std::unique_ptr<IBrain> brain) { m_brain = std::move(brain); }
 

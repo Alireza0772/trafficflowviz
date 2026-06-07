@@ -35,6 +35,7 @@ namespace tfv
 
         // Set references to other system components
         void setSimulationLayer(SimulationLayer* layer) { m_simulationLayer = layer; }
+        void setDebugPerceptionLayer(Layer* layer) { m_debugPerceptionLayer = layer; }
         void setAlertManager(AlertManager* manager) { m_alertManager = manager; }
         void setRecordingManager(RecordingManager* manager) { m_recordingManager = manager; }
 
@@ -55,6 +56,7 @@ namespace tfv
         SDL_Renderer* m_renderer;
         Simulation* m_simulation;
         SimulationLayer* m_simulationLayer{nullptr};
+        Layer* m_debugPerceptionLayer{nullptr};
         AlertManager* m_alertManager{nullptr};
         RecordingManager* m_recordingManager{nullptr};
 

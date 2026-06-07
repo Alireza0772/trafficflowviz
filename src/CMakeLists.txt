@@ -34,6 +34,7 @@ set(TRAFFICFLOWVIZ_SOURCES
     rendering/layers/SimulationLayer.cpp
     rendering/layers/HeatmapLayer.cpp
     rendering/layers/ImGuiLayer.cpp
+    rendering/layers/DebugPerceptionLayer.cpp
 
     # Platform-specific sources
     platforms/SDL/SDLRenderer.cpp

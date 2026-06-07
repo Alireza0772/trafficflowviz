@@ -149,6 +149,11 @@ namespace tfv
         m_layerStack.pushLayer(m_heatmapLayer);
         m_heatmapLayer->setEnabled(m_showHeatmap);
 
+        // 2b. Perception debug overlay (off by default; toggled from the View menu)
+        m_debugPerceptionLayer =
+            std::make_shared<DebugPerceptionLayer>(m_renderer, &m_sim, m_simulationLayer.get());
+        m_layerStack.pushLayer(m_debugPerceptionLayer);
+
         // 3. ImGui layer (top layer)
         if(m_rendererType == "SDL")
         {
@@ -158,6 +163,7 @@ namespace tfv
                                              static_cast<SDL_Renderer*>(nativeRenderer), &m_sim);
 
             m_imguiLayer->setSimulationLayer(m_simulationLayer.get());
+            m_imguiLayer->setDebugPerceptionLayer(m_debugPerceptionLayer.get());
             m_imguiLayer->setAlertManager(m_alertManager.get());
             m_imguiLayer->setRecordingManager(m_recordingManager.get());
             m_imguiLayer->showKeybindingsWindow(m_showKeybindings);

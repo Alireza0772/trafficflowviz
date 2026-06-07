@@ -49,6 +49,12 @@ namespace tfv
         // The vehicle the user clicked (0 = none); used by the inspector / debug overlay.
         uint64_t selectedVehicleId() const { return m_selectedVehicleId; }
 
+        // Forward of the vehicle render transform: world -> framebuffer-pixel position.
+        glm::vec2 worldToScreen(glm::vec2 world) const
+        {
+            return glm::vec2(world.x * getZoom() + getPanX(), world.y * getZoom() + getPanY());
+        }
+
       private:
         // drawable-pixels / window-points (1.0 except on hi-DPI displays)
         float framebufferScale() const;

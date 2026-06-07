@@ -212,6 +212,14 @@ namespace tfv
                     m_showInspector = inspector;
                 }
 
+                // Toggle the perception debug overlay
+                if(m_debugPerceptionLayer)
+                {
+                    bool overlay = m_debugPerceptionLayer->isEnabled();
+                    if(ImGui::MenuItem("Perception Overlay", "P", &overlay))
+                        m_debugPerceptionLayer->setEnabled(overlay);
+                }
+
                 // Toggle layers
                 if(m_simulationLayer)
                 {
