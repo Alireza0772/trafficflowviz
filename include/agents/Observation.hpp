@@ -1,0 +1,67 @@
+#ifndef TFV_OBSERVATION_HPP
+#define TFV_OBSERVATION_HPP
+
+#include <array>
+
+namespace tfv
+{
+    /**
+     * Fixed-length, normalized observation vector handed to every brain.
+     *
+     * The length and channel layout are locked by the design doc (§3.4/§6.3) so a
+     * rule brain, a neural net, and an ONNX/Python model are interchangeable and
+     * trained models never need re-export when channels are added. Phase 2 fills
+     * only the longitudinal subset (the indices in `obs_idx` below) and leaves the
+     * remaining perception channels zero; Phase 5 populates the rest.
+     *
+     * Channels are normalized by documented fixed scales so a brain can reconstruct
+     * absolute physical quantities (speed/gap in model units) deterministically.
+     */
+    inline constexpr int OBS_LEN = 24;
+    using Observation = std::array<float, OBS_LEN>;
+
+    // Documented normalization scales (model units; pixels stand in for meters in
+    // Phase 2 — see the units caveat in docs/agent-simulation-design.md).
+    inline constexpr float OBS_SPEED_SCALE = 40.0f; // speed normalizer (m/s)
+    inline constexpr float OBS_RANGE_SCALE = 60.0f; // distance normalizer (m, = front range)
+    inline constexpr float OBS_ACCEL_SCALE = 10.0f; // acceleration normalizer (m/s^2)
+
+    namespace obs_idx
+    {
+        // Self (idx 0-3)
+        inline constexpr int SelfSpeed = 0;     // speed / OBS_SPEED_SCALE
+        inline constexpr int SelfAccel = 1;     // last accel / OBS_ACCEL_SCALE
+        inline constexpr int LaneFraction = 2;  // laneIndex / (laneCount-1), 0..1 (Phase 3)
+        inline constexpr int PositionAlong = 3; // position along segment, 0..1
+        // Segment context (idx 4-7)
+        inline constexpr int SpeedLimit = 4;             // effective speed limit / OBS_SPEED_SCALE
+        inline constexpr int Congestion = 5;             // segment congestion, 0..1
+        inline constexpr int DistToNextIntersection = 6; // (1-pos)*length / OBS_RANGE_SCALE (Phase 3)
+        inline constexpr int LaneCount = 7;              // lane count / 8 (Phase 3)
+        // Signal/sign (idx 8-10)
+        inline constexpr int SignalPhase = 8;         // light color ahead: green 0, amber .5, red 1 (Phase 4)
+        inline constexpr int SignalTimeToChange = 9;  // reserved (refined later)
+        inline constexpr int NearestSignType = 10;    // normalized sign-type code ahead (Phase 3)
+        // Front sector (idx 11-13): the PATH-relative leader/sign/light front constraint.
+        inline constexpr int FrontGap = 11;       // bumper gap (m) / OBS_RANGE_SCALE, clamped to 1
+        inline constexpr int FrontRelSpeed = 12;  // (v_self - v_leader) / OBS_SPEED_SCALE
+        inline constexpr int FrontHasLeader = 13; // 1.0 if a front constraint exists, else 0
+        // World-space sector neighbours (Phase 5). Each sector = {relDist, relSpeed,
+        // lightBits}; lightBits is packed as one normalized float = (bits & 0x1F)/31.
+        inline constexpr int RearRelDist = 14;
+        inline constexpr int RearRelSpeed = 15;
+        inline constexpr int RearLightBits = 16;
+        inline constexpr int LeftRelDist = 17;
+        inline constexpr int LeftRelSpeed = 18;
+        inline constexpr int LeftLightBits = 19;
+        inline constexpr int RightRelDist = 20;
+        inline constexpr int RightRelSpeed = 21;
+        inline constexpr int RightLightBits = 22;
+        // idx 23 reserved.
+    } // namespace obs_idx
+
+    inline constexpr float OBS_TIME_SCALE = 10.0f; // seconds normalizer for time-to-change
+
+} // namespace tfv
+
+#endif // TFV_OBSERVATION_HPP

@@ -41,5 +41,6 @@ namespace tfv
         SDL_Renderer* m_renderer;
         SDL_Window* m_window;
         bool m_antiAliasingEnabled;
+        TTF_Font* m_font{nullptr}; // cached UI font (opened once in initialize())
     };
 } // namespace tfv

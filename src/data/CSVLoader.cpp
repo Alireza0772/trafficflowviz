@@ -78,6 +78,19 @@ namespace tfv
 
             v.vel = glm::vec2(velX, velY);
 
+            // Optional trailing 'maxSpeed' column (m/s; 0 or absent = use segment limit).
+            if(std::getline(ss, token, ','))
+            {
+                try
+                {
+                    v.maxSpeed = std::stof(token);
+                }
+                catch(...)
+                {
+                    v.maxSpeed = 0.0f;
+                }
+            }
+
             vehicles.push_back(v);
         }
 

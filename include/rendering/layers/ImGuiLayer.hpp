@@ -28,13 +28,14 @@ namespace tfv
         // Layer interface implementation
         virtual void onAttach() override;
         virtual void onDetach() override;
-        virtual bool onEvent(void* event) override;
+        virtual bool onEvent(Event& event) override;
         virtual void onUpdate(double dt) override;
         virtual void onRender() override;
         virtual void onImGuiRender() override;
 
         // Set references to other system components
         void setSimulationLayer(SimulationLayer* layer) { m_simulationLayer = layer; }
+        void setDebugPerceptionLayer(Layer* layer) { m_debugPerceptionLayer = layer; }
         void setAlertManager(AlertManager* manager) { m_alertManager = manager; }
         void setRecordingManager(RecordingManager* manager) { m_recordingManager = manager; }
 
@@ -50,16 +51,29 @@ namespace tfv
         using AlertUICallback = std::function<void(const std::string& message, uint32_t segmentId)>;
         void setAlertCallback(AlertUICallback callback) { m_alertUICallback = callback; }
 
+        // Start/stop trajectory+metrics export (the Engine owns the exporters).
+        using ExportToggleCallback = std::function<void(bool)>;
+        void setExportToggleCallback(ExportToggleCallback cb) { m_exportToggleCallback = std::move(cb); }
+        void setExportActive(bool active) { m_exportEnabled = active; } // reflect engine state
+
       private:
         SDL_Window* m_window;
         SDL_Renderer* m_renderer;
         Simulation* m_simulation;
         SimulationLayer* m_simulationLayer{nullptr};
+        Layer* m_debugPerceptionLayer{nullptr};
         AlertManager* m_alertManager{nullptr};
         RecordingManager* m_recordingManager{nullptr};
 
+        // Vehicle inspector (Phase 7 observability): shows the selected vehicle's
+        // observation/action/sectors/violations from Simulation::inspect().
+        void renderVehicleInspector();
+
         bool m_initialized{false};
         bool m_showKeybindings{false};
+        bool m_showInspector{false};
+        bool m_exportEnabled{false};
+        ExportToggleCallback m_exportToggleCallback;
 
         // FPS tracking
         int m_fps{0};

@@ -8,6 +8,23 @@
 #include <stdexcept>                // For exceptions
 
 // Include ImGui SDL backend implementation details if needed
+
+namespace tfv
+{
+    // Helper function to convert SDL mouse button to our enum
+    MouseButton convertSDLMouseButton(Uint8 sdlButton)
+    {
+        switch(sdlButton)
+        {
+        case SDL_BUTTON_LEFT:   return MouseButton::Left;
+        case SDL_BUTTON_RIGHT:  return MouseButton::Right;
+        case SDL_BUTTON_MIDDLE: return MouseButton::Middle;
+        case SDL_BUTTON_X1:     return MouseButton::Button4;
+        case SDL_BUTTON_X2:     return MouseButton::Button5;
+        default:                return MouseButton::Left; // fallback
+        }
+    }
+}
 // Note: This is still platform-specific, but contained within this file.
 #include <imgui_impl_sdl2.h> // We need the functions
 
@@ -71,8 +88,7 @@ namespace tfv
 
         m_window = SDL_CreateWindow(m_data.title.c_str(), SDL_WINDOWPOS_CENTERED,
                                     SDL_WINDOWPOS_CENTERED, m_data.width, m_data.height,
-                                    SDL_WINDOW_BORDERLESS | SDL_WINDOW_RESIZABLE |
-                                        SDL_WINDOW_ALLOW_HIGHDPI); // Add HIGHDPI
+                                    SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
 
         if(!m_window)
         {
@@ -110,32 +126,31 @@ namespace tfv
     void SDLWindow::pollEvents()
     {
         SDL_Event e;
+        const bool hasImGui = (ImGui::GetCurrentContext() != nullptr);
         while(SDL_PollEvent(&e))
         {
-            // --- Crucial Part 1: Give ImGui first chance at the RAW event ---
-            // This is necessary because ImGui backends often need the raw platform event.
-            if(ImGui::GetCurrentContext() != nullptr && ImGui::GetIO().WantCaptureMouse &&
-               (e.type == SDL_MOUSEMOTION || e.type == SDL_MOUSEBUTTONDOWN ||
-                e.type == SDL_MOUSEBUTTONUP || e.type == SDL_MOUSEWHEEL))
-            {
+            // Always let ImGui see every event first so it can track hover/focus
+            // and decide whether it wants the mouse/keyboard. (The previous code
+            // only forwarded events once WantCapture was already true, which never
+            // happened without the prior events — so the UI was non-interactive.)
+            if(hasImGui)
                 ImGui_ImplSDL2_ProcessEvent(&e);
-                // Don't process further if ImGui captured it
-                // (Unless you specifically want background interaction)
-                continue;
-            }
-            if(ImGui::GetCurrentContext() != nullptr && ImGui::GetIO().WantCaptureKeyboard &&
-               (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP || e.type == SDL_TEXTINPUT))
+
+            // If ImGui is using the mouse/keyboard, consume the event so it does
+            // not also drive the camera or engine hotkeys.
+            if(hasImGui)
             {
-                ImGui_ImplSDL2_ProcessEvent(&e);
-                continue;
-            }
-            // Special case for window events even if captured (like closing)
-            if(e.type == SDL_QUIT)
-            {
-                ImGui_ImplSDL2_ProcessEvent(&e); // Let ImGui know too
+                const ImGuiIO& io = ImGui::GetIO();
+                const bool isMouse =
+                    (e.type == SDL_MOUSEMOTION || e.type == SDL_MOUSEBUTTONDOWN ||
+                     e.type == SDL_MOUSEBUTTONUP || e.type == SDL_MOUSEWHEEL);
+                const bool isKeyboard =
+                    (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP || e.type == SDL_TEXTINPUT);
+                if((isMouse && io.WantCaptureMouse) || (isKeyboard && io.WantCaptureKeyboard))
+                    continue;
             }
 
-            // --- Crucial Part 2: Translate to your abstract events ---
+            // Translate to the abstract event pipeline (engine + layers).
             translateEvent(e);
         }
     }
@@ -191,19 +206,40 @@ namespace tfv
         }
         else if(sdlEvent.type == SDL_MOUSEBUTTONDOWN)
         {
-            MouseButtonPressedEvent event(sdlEvent.button.button, sdlEvent.button.x,
-                                          sdlEvent.button.y);
+            MouseButtonPressedEvent event(convertSDLMouseButton(sdlEvent.button.button), 
+                                         static_cast<float>(sdlEvent.button.x),
+                                         static_cast<float>(sdlEvent.button.y));
             m_data.eventCallback(event);
         }
         else if(sdlEvent.type == SDL_MOUSEBUTTONUP)
         {
-            MouseButtonReleasedEvent event(sdlEvent.button.button, sdlEvent.button.x,
-                                           sdlEvent.button.y);
+            MouseButtonReleasedEvent event(convertSDLMouseButton(sdlEvent.button.button), 
+                                          static_cast<float>(sdlEvent.button.x),
+                                          static_cast<float>(sdlEvent.button.y));
             m_data.eventCallback(event);
         }
         else if(sdlEvent.type == SDL_MOUSEWHEEL)
         {
-            MouseScrolledEvent event((float)sdlEvent.wheel.x, (float)sdlEvent.wheel.y);
+            // Use the precise (fractional) delta on trackpads when available;
+            // the integer wheel.x/y is quantized and jitters in sign, which made
+            // zoom flicker between in and out.
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+            float wx = sdlEvent.wheel.preciseX;
+            float wy = sdlEvent.wheel.preciseY;
+#else
+            float wx = static_cast<float>(sdlEvent.wheel.x);
+            float wy = static_cast<float>(sdlEvent.wheel.y);
+#endif
+            if(sdlEvent.wheel.direction == SDL_MOUSEWHEEL_FLIPPED)
+            {
+                wx = -wx;
+                wy = -wy;
+            }
+            // SDL wheel events carry no position; query it so the layer can
+            // zoom toward the cursor.
+            int mx = 0, my = 0;
+            SDL_GetMouseState(&mx, &my);
+            MouseScrolledEvent event(wx, wy, static_cast<float>(mx), static_cast<float>(my));
             m_data.eventCallback(event);
         }
         else if(sdlEvent.type == SDL_MOUSEMOTION)

@@ -36,6 +36,14 @@ namespace tfv
         // Set render quality hints
         SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
 
+        // Cache the UI font once (previously opened/closed on every drawText call).
+        m_font = TTF_OpenFont("/System/Library/Fonts/Supplemental/Arial.ttf", 16);
+        if(!m_font)
+            m_font = TTF_OpenFont("/System/Library/Fonts/Supplemental/Courier New.ttf", 16);
+        if(!m_font)
+            LOG_WARN("No UI font available; text rendering disabled: {error}",
+                     PARAM(error, TTF_GetError()));
+
         return true;
     }
 
@@ -49,6 +57,12 @@ namespace tfv
 
         // Note: We don't own the window, just the renderer
         m_window = nullptr;
+
+        if(m_font)
+        {
+            TTF_CloseFont(m_font);
+            m_font = nullptr;
+        }
 
         TTF_Quit();
     }
@@ -207,18 +221,9 @@ namespace tfv
 
     SDL_Texture* SDLRenderer::createTextTexture(const std::string& text)
     {
-        // Load a font (in a real implementation, we'd cache this)
-        TTF_Font* font = TTF_OpenFont("/System/Library/Fonts/Supplemental/Arial.ttf", 16);
-        if(!font)
-        {
-            LOG_ERROR("Failed to load font: {error}", PARAM(error, TTF_GetError()));
-            // Try fallback font
-            font = TTF_OpenFont("/System/Library/Fonts/Supplemental/Courier New.ttf", 16);
-            if(!font)
-            {
-                return nullptr;
-            }
-        }
+        // Use the cached font (opened once in initialize()).
+        if(!m_font)
+            return nullptr;
 
         // Get current draw color
         Uint8 r, g, b, a;
@@ -226,20 +231,13 @@ namespace tfv
         SDL_Color color = {r, g, b, a};
 
         // Render text to surface
-        SDL_Surface* surface = TTF_RenderText_Blended(font, text.c_str(), color);
+        SDL_Surface* surface = TTF_RenderText_Blended(m_font, text.c_str(), color);
         if(!surface)
-        {
-            TTF_CloseFont(font);
             return nullptr;
-        }
 
         // Convert surface to texture
         SDL_Texture* texture = SDL_CreateTextureFromSurface(m_renderer, surface);
-
-        // Clean up
         SDL_FreeSurface(surface);
-        TTF_CloseFont(font);
-
         return texture;
     }
 } // namespace tfv

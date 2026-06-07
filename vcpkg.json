@@ -1,0 +1,65 @@
+{
+  "name": "trafficflowviz",
+  "version": "1.0.0",
+  "description": "High-performance C++ platform for live & historical traffic visualisation, analytics and reinforcement-learning research",
+  "homepage": "https://github.com/yourname/trafficflowviz",
+  "license": "MIT",
+  "dependencies": [
+    {
+      "name": "sdl2",
+      "version>=": "2.28.0"
+    },
+    {
+      "name": "sdl2-image",
+      "version>=": "2.6.0"
+    },
+    {
+      "name": "sdl2-ttf", 
+      "version>=": "2.20.0"
+    },
+    {
+      "name": "glm",
+      "version>=": "1.0.1"
+    },
+    {
+      "name": "pybind11",
+      "version>=": "2.11.0"
+    },
+    {
+      "name": "catch2",
+      "version>=": "3.4.0"
+    },
+    {
+      "name": "fmt",
+      "version>=": "10.0.0"
+    }
+  ],
+  "features": {
+    "python": {
+      "description": "Build Python bindings",
+      "dependencies": [
+        "pybind11"
+      ]
+    },
+    "testing": {
+      "description": "Build unit tests",
+      "dependencies": [
+        "catch2"
+      ]
+    },
+    "networking": {
+      "description": "Network support for live data feeds",
+      "dependencies": [
+        "libwebsockets",
+        "nlohmann-json"
+      ]
+    },
+    "performance": {
+      "description": "Performance profiling and metrics",
+      "dependencies": [
+        "tracy"
+      ]
+    }
+  },
+  "builtin-baseline": "3dd44b932e5d66dbb73b61bc0d1b11db46882c52"
+}

@@ -1,4 +1,5 @@
 #include "rendering/layers/ImGuiLayer.hpp"
+#include "utils/LoggingManager.hpp"
 #include <imgui.h>
 #include <imgui_impl_sdl2.h>
 #include <imgui_impl_sdlrenderer2.h>
@@ -31,12 +32,33 @@ namespace tfv
         // Setup Dear ImGui style
         ImGui::StyleColorsDark();
 
+        // Hi-DPI crisp fonts: rasterize the atlas at the framebuffer scale and lay
+        // it out at 1/scale. Since onImGuiRender render-scales ImGui by the same
+        // framebuffer scale, text ends up sharp instead of an upscaled bitmap.
+        {
+            int ww = 0, wh = 0, rw = 0, rh = 0;
+            SDL_GetWindowSize(m_window, &ww, &wh);
+            SDL_GetRendererOutputSize(m_renderer, &rw, &rh);
+            float dpiScale = (ww > 0) ? static_cast<float>(rw) / static_cast<float>(ww) : 1.0f;
+            if(dpiScale < 1.0f)
+                dpiScale = 1.0f;
+
+            const float baseFontPx = 16.0f;
+            ImFont* font = io.Fonts->AddFontFromFileTTF(
+                "/System/Library/Fonts/Supplemental/Arial.ttf", baseFontPx * dpiScale);
+            if(!font)
+                io.Fonts->AddFontDefault(); // fall back to the embedded font
+            io.FontGlobalScale = 1.0f / dpiScale;
+        }
+
         // Setup Platform/Renderer backends
         ImGui_ImplSDL2_InitForSDLRenderer(m_window, m_renderer);
         ImGui_ImplSDLRenderer2_Init(m_renderer);
 
         m_initialized = true;
-        m_showKeybindings = true; // Show keybindings by default
+        // Keybindings visibility is controlled by the Engine (showKeybindingsWindow,
+        // toggled with 'K'); do not force it on here so the scene is unobstructed
+        // on first run.
     }
 
     void ImGuiLayer::onDetach()
@@ -50,19 +72,13 @@ namespace tfv
         }
     }
 
-    bool ImGuiLayer::onEvent(void* event)
+    bool ImGuiLayer::onEvent(Event& event)
     {
-        if(!m_initialized || !event)
-            return false;
-
-        SDL_Event* sdlEvent = static_cast<SDL_Event*>(event);
-        ImGui_ImplSDL2_ProcessEvent(sdlEvent);
-
-        // Check if ImGui wants to capture the event
-        ImGuiIO& io = ImGui::GetIO();
-        bool captured = io.WantCaptureMouse || io.WantCaptureKeyboard;
-
-        return captured;
+        // Raw SDL events are fed to ImGui (and consumed when ImGui wants the
+        // mouse/keyboard) at the window event-pump level (SDLWindow::pollEvents),
+        // so there is nothing to do per-layer here.
+        (void)event;
+        return false;
     }
 
     void ImGuiLayer::onUpdate(double dt)
@@ -98,12 +114,24 @@ namespace tfv
             renderKeybindingsWindow();
         }
 
+        if(m_showInspector)
+        {
+            renderVehicleInspector();
+        }
+
         // Render status bar at the bottom
         renderStatusBar();
 
-        // Render ImGui
+        // Render ImGui. On hi-DPI (Retina) displays the SDL renderer output is the
+        // full pixel framebuffer while ImGui lays out in logical points, so scale
+        // the renderer by the framebuffer scale before submitting ImGui draw data
+        // (otherwise the whole UI is drawn into the top-left quarter at half size).
+        // Reset to 1.0 afterwards so the scene keeps rendering at native pixels.
         ImGui::Render();
+        ImGuiIO& io = ImGui::GetIO();
+        SDL_RenderSetScale(m_renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), m_renderer);
+        SDL_RenderSetScale(m_renderer, 1.0f, 1.0f);
     }
 
     void ImGuiLayer::renderDockspace()
@@ -158,6 +186,17 @@ namespace tfv
         {
             if(ImGui::BeginMenu("File"))
             {
+                // Start/stop trajectory + metrics export to files.
+                if(m_exportToggleCallback)
+                {
+                    bool exporting = m_exportEnabled;
+                    if(ImGui::MenuItem(exporting ? "Stop Export" : "Export Trajectory", nullptr,
+                                       &exporting)) // menu-only; no key handler bound
+                    {
+                        m_exportEnabled = exporting;
+                        m_exportToggleCallback(m_exportEnabled);
+                    }
+                }
                 if(ImGui::MenuItem("Exit", "Esc"))
                 {
                     // Request application shutdown
@@ -175,6 +214,21 @@ namespace tfv
                 if(ImGui::MenuItem("Keybindings", "K", &keybindings))
                 {
                     m_showKeybindings = keybindings;
+                }
+
+                // Toggle the vehicle inspector (menu-only; 'I' is the global ImGui toggle)
+                bool inspector = m_showInspector;
+                if(ImGui::MenuItem("Vehicle Inspector", nullptr, &inspector))
+                {
+                    m_showInspector = inspector;
+                }
+
+                // Toggle the perception debug overlay
+                if(m_debugPerceptionLayer)
+                {
+                    bool overlay = m_debugPerceptionLayer->isEnabled();
+                    if(ImGui::MenuItem("Perception Overlay", nullptr, &overlay)) // menu-only
+                        m_debugPerceptionLayer->setEnabled(overlay);
                 }
 
                 // Toggle layers
@@ -260,7 +314,7 @@ namespace tfv
             ImGui::Text("FPS: %d", m_fps);
 
             ImGui::SameLine(100);
-            int vehicleCount = m_simulation ? m_simulation->snapshot().size() : 0;
+            int vehicleCount = m_simulation ? static_cast<int>(m_simulation->vehicleCount()) : 0;
             ImGui::Text("Vehicles: %d", vehicleCount);
 
             if(m_simulationLayer)
@@ -321,6 +375,66 @@ namespace tfv
             ImGui::PopTextWrapPos();
             ImGui::EndTooltip();
         }
+    }
+
+    void ImGuiLayer::renderVehicleInspector()
+    {
+        if(ImGui::Begin("Vehicle Inspector", &m_showInspector))
+        {
+            const uint64_t id = m_simulationLayer ? m_simulationLayer->selectedVehicleId() : 0;
+            if(id == 0)
+            {
+                ImGui::TextWrapped(
+                    "Click a vehicle in the scene to inspect its perception and decision.");
+            }
+            else
+            {
+                const VehicleInspection ins = m_simulation->inspect(id);
+                if(!ins.found)
+                {
+                    ImGui::Text("Vehicle #%llu not found (despawned).", (unsigned long long)id);
+                }
+                else
+                {
+                    ImGui::Text("Vehicle #%llu   brain: %s", (unsigned long long)id,
+                                m_simulation->brainKind().c_str());
+                    ImGui::Text("segment %u  lane %u  speed %.2f m/s  leader %lld  violations %u",
+                                ins.segmentId, (unsigned)ins.laneIndex, ins.speed,
+                                (long long)ins.leaderId, ins.violations);
+                    ImGui::Separator();
+                    const Action& a = ins.action;
+                    ImGui::Text("Action:  accel %.3f   laneChange %d   turn %d   lights 0x%02X",
+                                a.accel, (int)a.laneChange, (int)a.turn, (unsigned)a.lightCmd);
+                    ImGui::Separator();
+                    static const char* kLabels[24] = {
+                        "self_speed",   "self_accel",    "lane_fraction", "position",
+                        "speed_limit",  "congestion",    "dist_intersxn", "lane_count",
+                        "signal_phase", "signal_ttc",    "sign_type",     "front_gap",
+                        "front_relspd", "front_leader",  "rear_dist",     "rear_relspd",
+                        "rear_light",   "left_dist",     "left_relspd",   "left_light",
+                        "right_dist",   "right_relspd",  "right_light",   "reserved"};
+                    if(ImGui::CollapsingHeader("Observation (24 channels)",
+                                               ImGuiTreeNodeFlags_DefaultOpen))
+                        for(int i = 0; i < 24; ++i)
+                            ImGui::Text("  [%2d] %-14s % .4f", i, kLabels[i], ins.obs[i]);
+                    if(ImGui::CollapsingHeader("Perception sectors", ImGuiTreeNodeFlags_DefaultOpen))
+                    {
+                        static const char* sn[4] = {"Front", "Rear", "Left", "Right"};
+                        for(int s = 0; s < 4; ++s)
+                        {
+                            const SensedNeighbor& n = ins.sectors[s];
+                            if(n.valid)
+                                ImGui::Text("  %-5s id %llu  dist %.2f  relSpd %.2f  lights 0x%02X",
+                                            sn[s], (unsigned long long)n.id, n.relDist, n.relSpeed,
+                                            (unsigned)n.lightBits);
+                            else
+                                ImGui::Text("  %-5s (clear)", sn[s]);
+                        }
+                    }
+                }
+            }
+        }
+        ImGui::End();
     }
 
 } // namespace tfv

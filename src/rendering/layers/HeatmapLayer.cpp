@@ -27,7 +27,7 @@ namespace tfv
         m_heatmapRenderer.reset();
     }
 
-    bool HeatmapLayer::onEvent(void* event)
+    bool HeatmapLayer::onEvent(Event& event)
     {
         // This layer doesn't handle any events directly
         return false;

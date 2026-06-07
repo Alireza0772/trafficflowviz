@@ -15,7 +15,7 @@ namespace tfv
       public:
         RoadRenderer(Renderer* renderer, int panX, int panY, float scale, bool antiAliasing = false)
             : m_r(renderer), m_panX(panX), m_panY(panY), m_scale(scale), roadWidth{10.f},
-              dashed{false}, m_antiAliasing{antiAliasing}
+              m_antiAliasing{antiAliasing}
         {
             // Apply anti-aliasing setting to the renderer
             if(m_r)
@@ -31,7 +31,6 @@ namespace tfv
         int m_panX, m_panY;
         float m_scale;
         float roadWidth{10.f};
-        bool dashed{false};
         bool m_antiAliasing{false};
         void drawDashedLine(int x1, int y1, int x2, int y2);
     };
@@ -95,6 +94,9 @@ namespace tfv
         const RoadNetwork* getNetwork() const { return m_net; }
 
       private:
+        void drawSigns();  // draw traffic signs as small colored markers
+        void drawLights(); // draw traffic-light state per intersection approach
+
         Renderer* m_r;
         const RoadNetwork* m_net{nullptr};
         float m_scale{1.0f};

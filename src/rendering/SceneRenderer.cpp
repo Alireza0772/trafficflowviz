@@ -1,7 +1,9 @@
 #include "rendering/SceneRenderer.hpp"
 
+#include "agents/Action.hpp"
 #include <cmath>
 #include <glm/glm.hpp>
+#include <unordered_map>
 
 namespace tfv
 {
@@ -12,8 +14,84 @@ namespace tfv
         VehicleRenderer vehR(m_r, m_panX, m_panY, m_scale, m_antiAliasing);
         vehR.draw(vehicles, m_net);
 
+        drawSigns();
+        drawLights();
+
         // Store the snapshot for later renders
         m_lastSnapshot = vehicles;
+    }
+
+    void SceneRenderer::drawLights()
+    {
+        if(!m_net || m_net->intersections().empty())
+            return;
+        const auto& segs = m_net->segments();
+        std::unordered_map<uint32_t, const RoadVisual*> byId;
+        byId.reserve(segs.size());
+        for(const auto& s : segs)
+            byId.emplace(s.id, &s);
+
+        for(const auto& [nodeId, x] : m_net->intersections())
+        {
+            (void)nodeId;
+            for(uint32_t segId : x.approaches)
+            {
+                auto it = byId.find(segId);
+                if(it == byId.end())
+                    continue;
+                const RoadVisual* rv = it->second;
+
+                // Marker near the stop line (end of the approach segment).
+                const float t = 0.92f;
+                const float wx = rv->x1 + (rv->x2 - rv->x1) * t;
+                const float wy = rv->y1 + (rv->y2 - rv->y1) * t;
+                const int sx = static_cast<int>(wx * m_scale) + m_panX;
+                const int sy = static_cast<int>(wy * m_scale) + m_panY;
+
+                switch(m_net->approachColor(segId))
+                {
+                case LightColor::Green: m_r->setColor(40, 220, 40, 255); break;
+                case LightColor::Amber: m_r->setColor(240, 200, 40, 255); break;
+                case LightColor::Red:   m_r->setColor(230, 40, 40, 255); break;
+                }
+                const int sz = std::max(6, static_cast<int>(6 * m_scale));
+                m_r->fillRect(sx - sz / 2, sy - sz / 2, sz, sz);
+            }
+        }
+    }
+
+    void SceneRenderer::drawSigns()
+    {
+        if(!m_net)
+            return;
+        const auto& segs = m_net->segments();
+        for(const auto& [sid, sign] : m_net->signs())
+        {
+            const RoadVisual* rv = nullptr;
+            for(const auto& s : segs)
+                if(s.id == sign.segmentId)
+                {
+                    rv = &s;
+                    break;
+                }
+            if(!rv)
+                continue;
+
+            const float wx = rv->x1 + (rv->x2 - rv->x1) * sign.pos;
+            const float wy = rv->y1 + (rv->y2 - rv->y1) * sign.pos;
+            const int sx = static_cast<int>(wx * m_scale) + m_panX;
+            const int sy = static_cast<int>(wy * m_scale) + m_panY;
+
+            switch(sign.type)
+            {
+            case SignType::STOP:        m_r->setColor(220, 40, 40, 255); break;
+            case SignType::YIELD:       m_r->setColor(235, 200, 40, 255); break;
+            case SignType::SPEED_LIMIT: m_r->setColor(240, 240, 240, 255); break;
+            default:                    m_r->setColor(180, 180, 180, 255); break;
+            }
+            const int sz = std::max(5, static_cast<int>(5 * m_scale));
+            m_r->fillRect(sx - sz / 2, sy - sz / 2, sz, sz);
+        }
     }
 
     void SceneRenderer::update(double dt)
@@ -63,9 +141,6 @@ namespace tfv
             auto a2 = toScreen(x2 + nx * half, y2 + ny * half);
             auto b1 = toScreen(x1 - nx * half, y1 - ny * half);
             auto b2 = toScreen(x2 - nx * half, y2 - ny * half);
-
-            // Calculate the road width in pixels
-            float roadWidthPx = roadWidth * m_scale;
 
             // Set color for roads
             m_r->setColor(200, 200, 200, 255);
@@ -119,29 +194,21 @@ namespace tfv
 
     void VehicleRenderer::draw(const VehicleMap& vehicles, const RoadNetwork* const net)
     {
-        if(!net || net->segments().empty())
-            return;
-        const auto& segs = net->segments();
-        for(const auto& [id, v] : vehicles)
+        (void)net; // positioning now comes from Vehicle.worldPos/heading (computed by Simulation)
+        for(const auto& entry : vehicles)
         {
-            if(v.segmentId >= segs.size())
-                continue;
-            const auto& s = segs[v.segmentId];
-            float x1 = static_cast<float>(s.x1), y1 = static_cast<float>(s.y1);
-            float x2 = static_cast<float>(s.x2), y2 = static_cast<float>(s.y2);
-            float dx = x2 - x1, dy = y2 - y1;
-            float len = std::sqrt(dx * dx + dy * dy);
-            if(len == 0)
-                continue;
-            float ux = dx / len, uy = dy / len;
-            float t = v.position; // position is now 0..1
-            float wx = x1 + ux * (len * t);
-            float wy = y1 + uy * (len * t);
-            int sx = static_cast<int>(wx * m_scale) + m_panX;
-            int sy = static_cast<int>(wy * m_scale) + m_panY;
+            const Vehicle& v = entry.second;
+            const float ux = std::cos(v.heading), uy = std::sin(v.heading);
+            int sx = static_cast<int>(v.worldPos.x * m_scale) + m_panX;
+            int sy = static_cast<int>(v.worldPos.y * m_scale) + m_panY;
 
-            // Vehicle color - different green shade than heatmap
-            m_r->setColor(50, 200, 50, 255);
+            // Lights: red when braking, amber while signalling a lane change, else green.
+            if(v.lightBits & light::BRAKE)
+                m_r->setColor(235, 70, 50, 255);
+            else if(v.lightBits & (light::LEFT | light::RIGHT))
+                m_r->setColor(240, 200, 40, 255);
+            else
+                m_r->setColor(50, 200, 50, 255);
 
             if(m_scale < 2.0f)
             {

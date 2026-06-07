@@ -1,7 +1,10 @@
 #include "core/RoadNetwork.hpp"
 #include "utils/LoggingManager.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <glm/glm.hpp>
 #include <iostream>
@@ -26,9 +29,10 @@ namespace tfv
     bool RoadNetwork::loadCSV(const std::filesystem::path& path)
     {
         m_seg.clear();
-        m_adj.clear(); // Initialize adjacency list
         m_segments.clear();
         m_nodes.clear();
+        m_signs.clear();         // a bare reload leaves no stale signs ...
+        m_intersections.clear(); // ... or dangling intersections
 
         std::ifstream file(path);
         if(!file.is_open())
@@ -53,9 +57,17 @@ namespace tfv
             RoadVisual r{};
             char comma;
 
+            // Coordinates are floats in the CSV (e.g. 541.42). Parse as float and
+            // truncate to the int pixel fields — reading floats straight into int
+            // via >> stops at the '.', corrupting every later coordinate.
             uint32_t segId;
-            ss >> segId >> comma >> r.x1 >> comma >> r.y1 >> comma >> r.x2 >> comma >> r.y2;
+            float x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+            ss >> segId >> comma >> x1 >> comma >> y1 >> comma >> x2 >> comma >> y2;
             r.id = segId;
+            r.x1 = static_cast<int>(x1);
+            r.y1 = static_cast<int>(y1);
+            r.x2 = static_cast<int>(x2);
+            r.y2 = static_cast<int>(y2);
 
             if(ss)
             {
@@ -101,15 +113,22 @@ namespace tfv
                 // Calculate direction vector
                 segment.dir = glm::normalize(glm::vec2(r.x2 - r.x1, r.y2 - r.y1));
 
+                // Optional trailing 'lanes' column (default 1; keeps 5-column CSVs valid).
+                int lanes = 1;
+                {
+                    char c2;
+                    int L;
+                    if(ss >> c2 >> L && L >= 1)
+                        lanes = L;
+                }
+                segment.lanes = lanes;
+
                 // Add to segment map
                 m_segments[segId] = segment;
 
-                // Update node's outgoing segments
+                // Update node adjacency (single source of truth for routing + signals)
                 m_nodes[segment.fromNode].outgoing.push_back(segId);
-
-                // Update adjacency list for routing
-                m_adj[r.x1].push_back(r.id);
-                m_adj[r.x2].push_back(r.id);
+                m_nodes[segment.toNode].incoming.push_back(segId);
             }
         }
         LOG_INFO("loaded {count} segments from {file}", PARAM(count, m_seg.size()),
@@ -118,35 +137,50 @@ namespace tfv
         return !m_seg.empty();
     }
 
-    std::vector<uint32_t> RoadNetwork::route(uint32_t src, uint32_t dst) const
+    std::vector<uint32_t> RoadNetwork::route(uint32_t srcNode, uint32_t dstNode) const
     {
-        if(src == dst)
+        if(srcNode == dstNode)
             return {};
-        std::unordered_map<uint32_t, uint32_t> prevSeg;
+
+        // Deterministic BFS over the NODE graph using Node.outgoing (segment ids).
+        // outgoing is in stable insertion order, so tie-breaks are reproducible.
+        std::unordered_map<uint32_t, uint32_t> prevSeg; // nextNode -> segment used to reach it
         std::queue<uint32_t> q;
-        q.push(src);
-        std::unordered_set<uint32_t> visited{src};
+        q.push(srcNode);
+        std::unordered_set<uint32_t> visited{srcNode};
+
         while(!q.empty())
         {
-            uint32_t n = q.front();
+            const uint32_t n = q.front();
             q.pop();
-            for(uint32_t segId : m_adj.at(n))
+            const Node* node = getNode(n);
+            if(!node)
+                continue;
+            for(uint32_t segId : node->outgoing)
             {
-                const auto& seg = m_seg[segId];
-                uint32_t nextNode = (seg.x1 == n) ? seg.x2 : seg.x1;
+                const RoadSegment* seg = getSegment(segId);
+                if(!seg)
+                    continue;
+                const uint32_t nextNode = seg->toNode;
                 if(!visited.insert(nextNode).second)
                     continue;
                 prevSeg[nextNode] = segId;
-                if(nextNode == dst)
-                { // back‑track
+                if(nextNode == dstNode)
+                {
+                    // Back-track segment ids from dst to src.
                     std::vector<uint32_t> route;
-                    uint32_t cur = dst;
-                    while(cur != src)
+                    uint32_t cur = dstNode;
+                    while(cur != srcNode)
                     {
-                        uint32_t id = prevSeg[cur];
+                        auto it = prevSeg.find(cur);
+                        if(it == prevSeg.end())
+                            return {}; // defensive: broken chain
+                        const uint32_t id = it->second;
                         route.push_back(id);
-                        const auto& s = m_seg[id];
-                        cur = (s.x1 == cur) ? s.x2 : s.x1;
+                        const RoadSegment* s = getSegment(id);
+                        if(!s)
+                            return {};
+                        cur = s->fromNode;
                     }
                     std::reverse(route.begin(), route.end());
                     return route;
@@ -219,6 +253,10 @@ namespace tfv
             fromNode->outgoing.push_back(segment.id);
         }
 
+        // Update the destination node's incoming list (signals/intersections).
+        if(auto* toNode = getNode(segment.toNode))
+            toNode->incoming.push_back(segment.id);
+
         // Create visual segment
         RoadVisual vis;
         vis.id = segment.id;
@@ -236,16 +274,118 @@ namespace tfv
             vis.length = segment.length;
 
             m_seg.push_back(vis);
-
-            // Update adjacency list for routing
-            m_adj[vis.x1].push_back(vis.id);
-            m_adj[vis.x2].push_back(vis.id);
         }
     }
 
     void RoadNetwork::addNode(const Node& node)
     {
         m_nodes[node.id] = node;
+    }
+
+    void RoadNetwork::addSign(const Sign& sign)
+    {
+        m_signs[sign.id] = sign;
+        if(auto* seg = getSegment(sign.segmentId))
+        {
+            // Idempotent: don't list the same sign id twice on re-load.
+            if(std::find(seg->signIds.begin(), seg->signIds.end(), sign.id) == seg->signIds.end())
+                seg->signIds.push_back(sign.id);
+        }
+    }
+
+    const Sign* RoadNetwork::getSign(uint32_t id) const
+    {
+        auto it = m_signs.find(id);
+        return (it != m_signs.end()) ? &it->second : nullptr;
+    }
+
+    void RoadNetwork::buildIntersections(int minApproaches)
+    {
+        m_intersections.clear();
+        for(const auto& [nodeId, node] : m_nodes)
+        {
+            if(static_cast<int>(node.incoming.size()) < minApproaches)
+                continue;
+            Intersection x;
+            x.nodeId = nodeId;
+            x.approaches = node.incoming;
+            std::sort(x.approaches.begin(), x.approaches.end()); // deterministic phase order
+            x.approaches.erase(std::unique(x.approaches.begin(), x.approaches.end()),
+                               x.approaches.end()); // robust to duplicate approaches
+            m_intersections[nodeId] = std::move(x);
+        }
+        LOG_INFO("built {count} signalized intersections", PARAM(count, m_intersections.size()));
+    }
+
+    LightColor RoadNetwork::approachColor(uint32_t segmentId) const
+    {
+        const RoadSegment* seg = getSegment(segmentId);
+        if(!seg)
+            return LightColor::Green;
+        auto it = m_intersections.find(seg->toNode);
+        if(it == m_intersections.end())
+            return LightColor::Green; // unsignalized node
+        const Intersection& x = it->second;
+        if(x.currentPhase < x.approaches.size() && x.approaches[x.currentPhase] == segmentId)
+            return x.activeColor;     // the active approach (green/amber/all-red)
+        return LightColor::Red;       // a non-active approach is always red
+    }
+
+    bool RoadNetwork::loadSignsCSV(const std::filesystem::path& path)
+    {
+        std::ifstream file(path);
+        if(!file.is_open())
+            return false; // signs are optional: missing file is a no-op
+
+        auto parseType = [](std::string s) -> SignType {
+            for(auto& c : s)
+                c = static_cast<char>(::toupper(static_cast<unsigned char>(c)));
+            if(s == "STOP")
+                return SignType::STOP;
+            if(s == "YIELD")
+                return SignType::YIELD;
+            if(s == "SPEED_LIMIT" || s == "SPEEDLIMIT" || s == "LIMIT")
+                return SignType::SPEED_LIMIT;
+            return SignType::NONE;
+        };
+
+        std::string line;
+        std::getline(file, line); // header
+        int loaded = 0;
+        while(std::getline(file, line))
+        {
+            if(line.empty())
+                continue;
+            std::stringstream ss(line);
+            std::string idS, segS, typeS, valS, posS, maskS;
+            if(!std::getline(ss, idS, ','))
+                continue;
+            std::getline(ss, segS, ',');
+            std::getline(ss, typeS, ',');
+            std::getline(ss, valS, ',');
+            std::getline(ss, posS, ',');
+            std::getline(ss, maskS, ',');
+            try
+            {
+                Sign s;
+                s.id = static_cast<uint32_t>(std::stoul(idS));
+                s.segmentId = static_cast<uint32_t>(std::stoul(segS));
+                s.type = parseType(typeS);
+                s.value = valS.empty() ? 0.0f : std::stof(valS);
+                s.pos = posS.empty() ? 1.0f : std::stof(posS);
+                if(!maskS.empty())
+                    s.laneMask = static_cast<uint32_t>(std::stoul(maskS));
+                addSign(s);
+                ++loaded;
+            }
+            catch(const std::exception&)
+            {
+                // skip malformed row
+            }
+        }
+        LOG_INFO("loaded {count} signs from {file}", PARAM(count, loaded),
+                 PARAM(file, path.string()));
+        return true;
     }
 
 } // namespace tfv

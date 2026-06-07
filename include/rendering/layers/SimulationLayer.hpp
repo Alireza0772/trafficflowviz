@@ -6,6 +6,8 @@
 #include "core/Simulation.hpp"
 #include "rendering/Renderer.hpp"
 #include "rendering/SceneRenderer.hpp"
+#include <cstdint>
+#include <glm/glm.hpp>
 #include <memory>
 #include <string>
 
@@ -25,7 +27,7 @@ namespace tfv
         // Layer interface implementation
         virtual void onAttach() override;
         virtual void onDetach() override;
-        virtual bool onEvent(void* event) override;
+        virtual bool onEvent(Event& event) override;
         virtual void onUpdate(double dt) override;
         virtual void onRender() override;
         virtual void onImGuiRender() override;
@@ -40,12 +42,37 @@ namespace tfv
         // Get road network for use by other layers
         const RoadNetwork* getRoadNetwork() const { return m_simulation->getRoadNetwork(); }
 
+        // Map a logical-point cursor position to world coordinates (inverse of the
+        // vehicle render transform). For inspector vehicle picking + the debug overlay.
+        glm::vec2 screenToWorld(float logicalX, float logicalY) const;
+
+        // The vehicle the user clicked (0 = none); used by the inspector / debug overlay.
+        uint64_t selectedVehicleId() const { return m_selectedVehicleId; }
+
+        // Forward of the vehicle render transform: world -> framebuffer-pixel position.
+        glm::vec2 worldToScreen(glm::vec2 world) const
+        {
+            return glm::vec2(world.x * getZoom() + getPanX(), world.y * getZoom() + getPanY());
+        }
+
       private:
+        // drawable-pixels / window-points (1.0 except on hi-DPI displays)
+        float framebufferScale() const;
+
+        // Center + scale the camera so the whole road network fits the viewport.
+        void fitToView();
+
         Renderer* m_renderer;
         Simulation* m_simulation;
 
         // Scene renderer for visualization
         std::unique_ptr<SceneRenderer> m_sceneRenderer;
+        
+        // Mouse interaction state
+        bool m_isDragging = false;
+        float m_lastMouseX = 0.0f;
+        float m_lastMouseY = 0.0f;
+        uint64_t m_selectedVehicleId = 0; // clicked vehicle for the inspector (0 = none)
     };
 
 } // namespace tfv

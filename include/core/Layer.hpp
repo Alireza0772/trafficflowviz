@@ -2,6 +2,7 @@
 #define TFV_LAYER_HPP
 
 #include <string>
+#include "core/Event.hpp"
 
 namespace tfv
 {
@@ -22,7 +23,7 @@ namespace tfv
         virtual void onDetach() {}
 
         // Process layer events
-        virtual bool onEvent(void* event) { return false; }
+        virtual bool onEvent(Event& event) { return false; }
 
         // Update layer logic
         virtual void onUpdate(double dt) {}

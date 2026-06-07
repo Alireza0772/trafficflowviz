@@ -1,232 +1,211 @@
 # TrafficFlowViz
 
-**High‑performance C++ platform for live & historical traffic visualisation, analytics and reinforcement‑learning research.**
+**An agent-based traffic microsimulation in C++.** Every vehicle runs a pluggable *brain* — a built-in rule model, a configurable neural net, or your own trained model (C/DLL, Python, or ONNX) — in a closed **sense → decide → act** loop, with expressive real-time visualization and reproducible data export. Built for traffic / reinforcement-learning research.
+
+> **Status:** research prototype. It is a single-process SDL2 application with a deterministic, *same-build* reproducible core (see [Determinism](#determinism--testing)). It is **not** a distributed ingest platform — the items in [Roadmap](#roadmap) are explicitly not built yet.
 
 ---
 
-## Table of Contents
+## Table of Contents
 
-- [TrafficFlowViz](#trafficflowviz)
-  - [Table of Contents](#tableofcontents)
-  - [Overview](#overview)
-  - [Key Features](#keyfeatures)
-  - [Quick Start](#quickstart)
-  - [Detailed Installation](#detailedinstallation)
-    - [Prerequisites](#prerequisites)
-    - [Build Options](#buildoptions)
-  - [Python API](#pythonapi)
-  - [Data Formats](#dataformats)
-  - [Docker \& Dev Containers](#dockerdevcontainers)
-  - [Testing \& CI](#testingci)
-  - [Contributing](#contributing)
-  - [Roadmap](#roadmap)
-  - [License \& Citation](#licensecitation)
-  - [Architecture (Short)](#architectureshort)
+- [Overview](#overview)
+- [Key features](#key-features)
+- [Quick start](#quick-start)
+- [Build](#build)
+- [Plug in a brain](#plug-in-a-brain)
+- [Observe & export](#observe--export)
+- [Determinism & testing](#determinism--testing)
+- [Documentation](#documentation)
+- [Project layout](#project-layout)
+- [Roadmap](#roadmap)
+- [License & citation](#license--citation)
+- [Architecture (short)](#architecture-short)
 
 ---
 
 ## Overview
 
-TrafficFlowViz (TFV) lets city engineers, researchers and data‑scientists **ingest 100 k+ msgs s⁻¹**, replay months of log data and experiment with RL/GNN control policies from the comfort of a Jupyter notebook – all while maintaining **≥ 60 FPS** interactive visuals on commodity GPUs.
+TrafficFlowViz (TFV) simulates road traffic at the level of individual vehicles. The engine advances on a fixed timestep; on each tick every vehicle perceives its surroundings, a decision *brain* maps that perception to an action, an `ActionValidator` bounds the action, and the engine integrates motion under road, lane, sign, and traffic-light constraints. The decision seam is the whole point: the same engine runs a hand-written car-following model, a neural network, or an externally trained policy with no engine changes.
 
-> **Why another traffic viewer?**  Existing tools focus either on microscopic simulation (SUMO, Vissim) or pretty but non‑interactive dashboards. TFV bridges the gap: native‑code performance + modern UI + first‑class Python bridge.
-
----
-
-## Key Features
-
-| Area                | Highlights                                                                                                 |
-| ------------------- | ---------------------------------------------------------------------------------------------------------- |
-| **Visualisation**   | Zoomable tiled map; vector arrows & heatmaps; layer toggle & ordering; movie/GIF snapshot export.          |
-| **Simulation Core** | Deterministic fixed‑step loop; live & historical replay; congestion metrics; alert rules.                  |
-| **Data Ingestion**  | REST/WebSocket adapter (JSON/Proto); CSV/Parquet loader; pluggable broker (Kafka/NATS).                    |
-| **Python Bindings** | Gym‑like `step() / reset()` API; NumPy zero‑copy buffers; wheel builds for macOS universal2, Linux x86‑64. |
-| **Plugin System**   | Load C/C++/Rust or ONNX models at runtime via stable C ABI + watchdog thread.                              |
-| **Observability**   | Structured colour logs; Prometheus metrics; optional Jaeger tracing.                                       |
-| **Portability**     | Single code‑base; supports macOS, Linux, Windows. Continuous builds on all three.                          |
+It began as a passive visualizer and was migrated, strangler-fig style, into this microsimulation behind a stable `Simulation` facade — so the renderer kept working at every step. See [`docs/agent-simulation-design.md`](docs/agent-simulation-design.md) for the design and [`docs/ONBOARDING.md`](docs/ONBOARDING.md) for a hands-on usage guide.
 
 ---
 
-## Quick Start
+## Key features
+
+| Area | What's actually here |
+| --- | --- |
+| **Agent model** | IDM longitudinal car-following (`rule`), asymmetric keep-right **MOBIL** lane changes, deterministic BFS routing-by-intent, STOP/YIELD/speed-limit signs, and a central traffic-light controller (green → amber → all-red). |
+| **Pluggable brains** | One `IBrain` seam (24-channel `Observation` → `Action`) + a versioned **C-ABI vtable**. Backends: built-in configurable **NN**, **C/DLL** (`dlopen`), **embedded Python** (pybind11), and **ONNX Runtime**. Each is opt-in and **fail-soft** (any failure falls back to the rule brain). |
+| **Perception** | Authoritative world pose/heading, a uniform-grid spatial index, and four ego-frame F/R/L/R neighbour sectors. |
+| **Observability** | Vehicle/brain **Inspector** (live 24-channel observation, action, violations), a **perception overlay**, a congestion heatmap, and screenshot/video recording. |
+| **Reproducible export** | `RunManifest` (seed + config + brain hash + final-state digest), per-tick **trajectory** and per-segment **metrics** CSV, a windowless **`tfv_headless`** batch runner, and a GUI export toggle that byte-matches the headless output. |
+| **Determinism** | Fixed timestep, seeded streams, no RNG in the step path; a standalone **golden-trajectory** test pins the behaviour (see below). |
+
+---
+
+## Quick start
 
 ```bash
-# clone incl. submodules
-$ git clone --recursive https://github.com/yourname/trafficflowviz.git
-$ cd trafficflowviz
+# clone (ImGui is a submodule)
+git clone --recursive https://github.com/Alireza0772/trafficflowviz.git
+cd trafficflowviz
 
-# build (debug)
-$ ./build.sh            # uses CMake + Ninja
+# configure + build (default preset, no extra dependencies)
+cmake --preset default
+cmake --build build
 
-# run demo scene
-$ ./build/bin/tfv_demo  # loads data/roads_demo.csv by default
+# run the GUI
+./build/bin/trafficviz
+
+# run the determinism test
+ctest --test-dir build -R golden_trajectory      # expect: PASS: golden_trajectory (15 gates)
+
+# headless reproducible run -> manifest.json + trajectory.csv + metrics.csv
+./build/bin/tfv_headless --export-ticks=1200 --export-dir=out --sim-default-brain=nn
 ```
 
-> **Tip:** add `./scripts` to your PATH – it contains one‑liners for common workflows (profiling, sanitizers, packaging).
+The default build produces three binaries in `build/bin/`: **`trafficviz`** (interactive GUI), **`tfv_headless`** (batch/export runner), and **`tfv_golden_test`** (the determinism contract).
 
 ---
 
-## Detailed Installation
+## Build
 
-### Prerequisites
+**Prerequisites**
 
-* **Compiler:** Clang 16 or GCC 13 (C++23)
-* **CMake:** ≥ 3.25
-* **Python:** ≥ 3.8 (optional but recommended)
-* **Libraries:** SDL2, ImGui (vendored); zstd; Arrow
-* **macOS only:** Command‑Line Tools + (optionally) MoltenVK
+- A C++23 compiler (Clang or GCC)
+- CMake ≥ 3.25
+- SDL2 + SDL2_image + SDL2_ttf, and glm
+- ImGui (vendored as a git submodule — use `--recursive`, or `git submodule update --init`)
+- *Optional:* Python 3 + pybind11 (for the `python:` backend); ONNX Runtime (for the `onnx:` backend)
 
-### Build Options
+**Presets** (`CMakePresets.json`): `default`, `debug`, `vcpkg` (portable, needs `$VCPKG_ROOT`), `release`, `ci`. Non-default presets configure into their own build dir (e.g. `build-release/`).
 
-| CMake Flag           | Default | Description                                         |
-| -------------------- | ------- | --------------------------------------------------- |
-| `TFV_RENDERER`       | `SDL`   | `SDL`, `Metal` or `Vulkan`                          |
-| `TFV_BUILD_PYTHON`   | `ON`    | Build wheels + install to `${CMAKE_INSTALL_PREFIX}` |
-| `TFV_USE_SANITIZERS` | `OFF`   | Address/UBSan for debug builds                      |
-| `TFV_ENABLE_DOCS`    | `OFF`   | Build Doxygen + Sphinx docs                         |
+**Options**
+
+| CMake flag | Default | Description |
+| --- | --- | --- |
+| `TFV_WITH_PYTHON` | `OFF` | Embedded-Python brain backend (`python:`); needs Python3 Development.Embed + pybind11. |
+| `TFV_WITH_ONNX` | `OFF` | ONNX Runtime brain backend (`onnx:`); needs ONNX Runtime. |
+| `TFV_USE_SANITIZERS` | `OFF` | Address/UB sanitizers for debug builds. |
+| `TFV_ENABLE_DOCS` | `OFF` | Build documentation targets. |
 
 ```bash
-cmake -B build -S . -DTFV_RENDERER=Metal -DTFV_BUILD_PYTHON=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-sudo cmake --install build
+cmake --preset default -DTFV_WITH_PYTHON=ON -DTFV_WITH_ONNX=ON
+cmake --build build
 ```
+
+Both optional backends compile as dependency-free stubs when OFF, and the default build links neither — so a plain build needs nothing beyond SDL2 + glm.
 
 ---
 
-## Python API
+## Plug in a brain
 
-After installing the wheel (`pip install dist/trafficflowviz‑*.whl`) use it just like an OpenAI Gym environment:
+Select the decision brain with `sim.default_brain` in `trafficflowviz.conf` or `--sim-default-brain=...`:
 
-```python
-import trafficflowviz as tfv
+| Value | Backend |
+| --- | --- |
+| `rule` | Built-in IDM rule brain (the safe fallback). |
+| `nn` | Built-in feed-forward net, configured by `sim.nn.*` (`layers` must start at 24 and end at 4). |
+| `dll:<path>` | A shared library implementing the C ABI in [`include/agents/tfv_brain.h`](include/agents/tfv_brain.h). |
+| `python:<module>[:func]` | A Python module exposing `decide_batch(obs)` (requires `-DTFV_WITH_PYTHON=ON`). |
+| `onnx:<path>` | A model with one float32 `[N,24]` input and one `[N,K]` output (requires `-DTFV_WITH_ONNX=ON`). |
 
-env = tfv.Env("data/munich_5min.parquet")
-obs = env.reset()
-for _ in range(1_000):
-    action = my_policy(obs)
-    obs, reward, done, info = env.step(action)
-    if done:
-        obs = env.reset()
-```
-
-Key modules:
-
-* `tfv.core` – direct binding of C++ Simulation / Engine
-* `tfv.datasets` – helpers to download or convert public traffic logs
-* `tfv.rl` – wrappers for RL lib / Ray RLlib
-
-API reference is auto‑generated in the online docs.
+Any unknown kind or failed load **falls back to `rule`** (logged) — the simulation never crashes on a bad model. The full observation/action contract, the per-backend authoring recipes, and reference plugins (`examples/brains/`) are documented in [`docs/ONBOARDING.md`](docs/ONBOARDING.md).
 
 ---
 
-## Data Formats
+## Observe & export
 
-| File                 | Schema                             | Purpose              |
-| -------------------- | ---------------------------------- | -------------------- |
-| `roads_*.csv`        | id, from, to, length, speed\_limit | Static road topology |
-| `vehicles_live.json` | id, ts, lat, lon, speed            | Live feed messages   |
-| `*.parquet`          | Arrow schema (see docs)            | Bulk historical logs |
+- **Vehicle Inspector** (View → Vehicle Inspector): click a vehicle to see its brain, state, held action, full 24-channel observation, and perception sectors.
+- **Perception Overlay** (View → Perception Overlay): draws the selected vehicle's sensing sectors and locked neighbours in the scene.
+- **Heatmap** (`H`): per-segment congestion.
+- **Export**: File → Export Trajectory in the GUI, or `tfv_headless`, writes `manifest.json` + `trajectory.csv` + `metrics.csv`. The manifest captures the seed, config, brain weights hash, and a final-state digest, so a run can be replayed on the same build and confirmed byte-for-byte.
 
-Conversion utilities:
+---
+
+## Determinism & testing
+
+The reproducibility tier is **statistical / same-build**: identical seed + config + data + binary reproduce the same `final_state_digest`. The build uses `-O3 -march=native`, so the pinned hex digests reproduce on the *same* compiler/flags/CPU — a mismatch across machines is expected and is not necessarily a regression.
+
+`tests/golden_trajectory.cpp` is a standalone (Catch2-free) harness, registered as the `golden_trajectory` ctest case. It builds scenarios programmatically and prints `PASS: golden_trajectory (15 gates)`, pinning **7 digests**: single-lane, multi-lane overtake, NN, the C-ABI vtable adapter, the exported-trajectory CSV, the lane-aware cross-segment leader, and the per-vehicle NN bank. Behaviour-neutral changes are proven digest-identical; behavioural changes are re-pinned with a guarding gate.
 
 ```bash
-python tools/convert_csv_to_parquet.py data/raw/*.csv -o data/converted/
+ctest --test-dir build --output-on-failure
+./build/bin/tfv_golden_test --print-hash      # prints the live digests (for re-pinning)
 ```
 
 ---
 
-## Docker & Dev Containers
+## Documentation
 
-The repo ships a **VS Code dev‑container** and a minimal **Docker runtime** image.
-
-```bash
-# one‑liner to start interactive container with hot‑reload
-$ ./scripts/devcontainer.sh
-```
-
-The Dockerfile can be used to run headless simulations on a server and stream rendered frames via WebRTC.
+- [`docs/ONBOARDING.md`](docs/ONBOARDING.md) — how to build, run, configure experiments, plug in a brain, and export/reproduce data.
+- [`docs/agent-simulation-design.md`](docs/agent-simulation-design.md) — the architecture and phased design.
 
 ---
 
-## Testing & CI
+## Project layout
 
-* **Unit tests:** Catch2 (`ctest -L unit`)
-* **Coverage:** gcov + gcovr → Codecov badge on PRs
-* **Static analysis:** clang‑tidy, cppcheck, include‑what‑you‑use
-* **CI matrix:** macOS 12, Ubuntu 22.04, Windows 2022
-* **Artifact upload:** Signed Python wheels to TestPyPI on tags
-
-Run all checks locally:
-
-```bash
-./scripts/run_local_ci.sh
 ```
-
----
-
-## Contributing
-
-Pull‑requests are welcome! Please:
-
-1. Create an issue first if you plan a major change.
-2. Follow the **Git Conventional Commits** style.
-3. Run `./scripts/clang_format_all.sh` before pushing.
-4. Ensure `./scripts/run_local_ci.sh` passes.
-5. Sign the CLA.
-
-See [CONTRIBUTING.md] for full guidelines.
+include/, src/
+  core/         Engine, Simulation (the two-phase update), World, RoadNetwork, Configuration
+  agents/       IBrain seam, RuleBasedBrain (IDM), NNBrain, ActionValidator,
+                Vtable/Dll/Python/Onnx brains, tfv_brain.h (C ABI)
+  perception/   uniform-grid spatial index + sector sensing
+  control/      central traffic-light controller
+  rendering/    SDL renderer, SceneRenderer, and the LayerStack (Simulation/Heatmap/
+                DebugPerception/ImGui layers)
+  io/           RunManifest + trajectory/metrics CSV exporters
+  tools/        tfv_headless batch runner
+examples/brains/  reference C, Python, and ONNX plugins
+tests/            golden_trajectory determinism test
+docs/             design + onboarding
+```
 
 ---
 
 ## Roadmap
 
-Planned high‑level milestones (see GitHub Projects board for detail):
+The agent-based simulation core (Phases 0–7) and the pluggable brain backends are implemented. Not yet built (each needs an SDK/platform outside the default toolchain):
 
-| Quarter     | Milestone                                          |
-| ----------- | -------------------------------------------------- |
-| **Q2 2025** | Live feed ingest (FR‑01); Python 0.1 wheel on PyPI |
-| **Q3 2025** | Plugin ABI v1; Isochrone export (FR‑06)            |
-| **Q4 2025** | Distributed ingest cluster; Windows DX12 renderer  |
-| **Q1 2026** | Self‑driving entity simulation; VR support         |
+- ONNX **CUDA/CoreML** execution providers (currently CPU only).
+- **Windows** path handling for the `dll:`/`onnx:` loaders.
+- **Parquet/Arrow** trajectory export (CSV is shipped).
+- Live-feed ingest and the alert-manager update hook are present as stubs but not yet wired.
 
 ---
 
-## License & Citation
+## License & citation
 
-* Code: **MIT License** (see `LICENSE`)
-* Third‑party deps: ImGui (MIT), SDL2 (zlib), etc.
-* If you use TFV in academic work please cite:
+- Code: **MIT License** — see [`LICENSE`](LICENSE).
+- Vendored dependencies keep their own licenses (ImGui — MIT; SDL2 — zlib).
+- If you use TFV in academic work, please cite:
 
-```
-@software{TFV2025,
-  author  = {Senobari, Alireza *et al.*},
-  title   = {TrafficFlowViz – High‑Performance Traffic Visualisation & Simulation},
-  year    = {2025},
-  url     = {https://github.com/yourname/trafficflowviz}
+```bibtex
+@software{TFV,
+  author = {Senobari, Alireza and contributors},
+  title  = {TrafficFlowViz -- An Agent-Based Traffic Microsimulation},
+  url    = {https://github.com/Alireza0772/trafficflowviz}
 }
 ```
 
 ---
 
-## Architecture (Short)
-
-TFV follows a **layered engine** pattern inspired by Walnut:
+## Architecture (short)
 
 ```
-┌──────────┐     messages     ┌───────────────┐
-│ LiveFeed │ ───────────────▶ │ Simulation    │
-└──────────┘                  │  (threads)    │
-                              └─────▲─────────┘
-            snapshot VehicleMap     │
-                              ┌─────┴─────────┐
-                              │ Rendering     │
-                              │  SDL / Metal  │
-                              └─────▲─────────┘
-                                    │ ImGui draw lists
-                              ┌─────┴─────────┐
-                              │ ImGuiLayer    │
-                              └───────────────┘
+ LiveFeed (stub) ─┐
+                  ▼
+   ┌──────────────────────────────────────────────┐      rule · nn · dll:
+   │ Simulation  (fixed timestep, seeded)          │      python: · onnx:
+   │   Phase A   sense → Observation → IBrain ──────┼────▶ one IBrain seam
+   │             → ActionValidator                  │      (+ C-ABI vtable)
+   │   Phase B0  conflict-free lane-change commit   │
+   │   Phase B   integrate · stop-lines · hand-off  │
+   └───────────────┬──────────────────────────────-┘
+       snapshot()  │  (thread-safe copy for rendering / export)
+                   ▼
+   LayerStack:  Simulation → Heatmap → DebugPerception → ImGui (Inspector)
 ```
 
-See the full specification below for deeper details.
-
----
+The renderer only ever reads an immutable `snapshot()`, never the live state — the same boundary the CSV/manifest exporters use, which is why export is behaviour-neutral.

@@ -31,7 +31,7 @@ namespace utils
 #if !NDEBUG
 #define __LOG_SCOPE__ (std::string(__FILENAME__) + ":" + STR(__LINE__))
 #else
-#define __LOG_SCOPE__ (std::string(__FILENAME__) + ":" + STR(__LINE__) + " [" + __FUNC_SIG__ + "]")
+#define __LOG_SCOPE__ (std::string(__FILENAME__) + ":" + STR(__LINE__))
 #endif
 
     // ───────────────────────────── public API ──────────────────────────────────
@@ -40,7 +40,13 @@ namespace utils
         INFO,
         WARNING,
         ERROR,
-        DEBUG
+#ifdef DEBUG
+#undef DEBUG
+        DEBUG_LEVEL
+#define DEBUG 1
+#else
+        DEBUG_LEVEL
+#endif
     };
 
     struct LogParam
@@ -123,7 +129,7 @@ namespace utils
         }
         template <typename... Ps> void Debug(std::string s, std::string_view f, Ps&&... ps)
         {
-            Log<LogLevel::DEBUG>(std::move(s), f, std::forward<Ps>(ps)...);
+            Log<LogLevel::DEBUG_LEVEL>(std::move(s), f, std::forward<Ps>(ps)...);
         }
 
       private:
