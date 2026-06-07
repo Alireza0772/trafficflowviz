@@ -28,6 +28,29 @@ namespace tfv
         SPEED_LIMIT
     };
 
+    // Turn category at a node (Phase C). Bit positions match Lane.allowedTurns's documented
+    // order {straight,left,right,u}: STRAIGHT=0x01, LEFT=0x02, RIGHT=0x04, U=0x08.
+    enum class TurnType : uint8_t
+    {
+        STRAIGHT = 0,
+        LEFT,
+        RIGHT,
+        U
+    };
+    inline constexpr uint8_t turnBit(TurnType t)
+    {
+        return static_cast<uint8_t>(1u << static_cast<uint8_t>(t));
+    }
+
+    // A permitted (inSeg -> outSeg) turn at a node. If a node has NO Movement entries, every
+    // movement is permitted (the no-op-when-absent default that keeps existing nets frozen).
+    struct Movement
+    {
+        uint32_t inSeg{0};
+        uint32_t outSeg{0};
+        TurnType turn{TurnType::STRAIGHT};
+    };
+
     // A traffic sign governing a position on a segment.
     struct Sign
     {

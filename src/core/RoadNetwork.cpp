@@ -34,6 +34,7 @@ namespace tfv
         m_nodes.clear();
         m_signs.clear();         // a bare reload leaves no stale signs ...
         m_intersections.clear(); // ... or dangling intersections
+        m_movements.clear();     // ... or stale movement tables
 
         std::ifstream file(path);
         if(!file.is_open())
@@ -537,6 +538,98 @@ namespace tfv
             }
         }
         LOG_INFO("loaded {count} signs from {file}", PARAM(count, loaded),
+                 PARAM(file, path.string()));
+        return true;
+    }
+
+    void RoadNetwork::addMovement(uint32_t nodeId, const Movement& m)
+    {
+        m_movements[nodeId].push_back(m);
+    }
+
+    bool RoadNetwork::movementAllowed(uint32_t inSeg, uint32_t outSeg) const
+    {
+        const RoadSegment* s = getSegment(inSeg);
+        if(!s)
+            return true;
+        auto it = m_movements.find(s->toNode);
+        if(it == m_movements.end())
+            return true; // no table for this node => every movement permitted (today)
+        for(const auto& m : it->second)
+            if(m.inSeg == inSeg && m.outSeg == outSeg)
+                return true;
+        return false;
+    }
+
+    TurnType RoadNetwork::turnTypeFor(uint32_t inSeg, uint32_t outSeg) const
+    {
+        const RoadSegment* a = getSegment(inSeg);
+        const RoadSegment* b = getSegment(outSeg);
+        if(!a || !b)
+            return TurnType::STRAIGHT;
+        const glm::vec2 i = a->dir, o = b->dir;
+        const float cross = i.x * o.y - i.y * o.x;
+        const float dot = i.x * o.x + i.y * o.y;
+        const float eps = 0.342f; // sin(20deg): a clean 90deg turn is unambiguously L/R
+        if(dot < -0.7f)
+            return TurnType::U;
+        if(cross > eps)
+            return TurnType::LEFT;
+        if(cross < -eps)
+            return TurnType::RIGHT;
+        return TurnType::STRAIGHT;
+    }
+
+    bool RoadNetwork::loadMovementsCSV(const std::filesystem::path& path)
+    {
+        std::ifstream file(path);
+        if(!file.is_open())
+            return false; // movements are optional: missing file is a no-op
+        auto parseTurn = [](std::string s) -> TurnType {
+            for(auto& c : s)
+                c = static_cast<char>(::toupper(static_cast<unsigned char>(c)));
+            if(s == "LEFT")
+                return TurnType::LEFT;
+            if(s == "RIGHT")
+                return TurnType::RIGHT;
+            if(s == "U" || s == "UTURN")
+                return TurnType::U;
+            return TurnType::STRAIGHT;
+        };
+        std::string line;
+        std::getline(file, line); // header
+        int loaded = 0;
+        while(std::getline(file, line))
+        {
+            if(line.empty())
+                continue;
+            std::stringstream ss(line);
+            std::string nodeS, inS, outS, turnS;
+            if(!std::getline(ss, nodeS, ','))
+                continue;
+            std::getline(ss, inS, ',');
+            std::getline(ss, outS, ',');
+            std::getline(ss, turnS, ',');
+            try
+            {
+                const uint32_t nodeId = static_cast<uint32_t>(std::stoul(nodeS));
+                const uint32_t inSeg = static_cast<uint32_t>(std::stoul(inS));
+                const uint32_t outSeg = static_cast<uint32_t>(std::stoul(outS));
+                if(!getNode(nodeId) || !getSegment(inSeg) || !getSegment(outSeg))
+                    continue; // skip dangling rows (never insert an unresolved movement)
+                Movement m;
+                m.inSeg = inSeg;
+                m.outSeg = outSeg;
+                m.turn = turnS.empty() ? turnTypeFor(inSeg, outSeg) : parseTurn(turnS);
+                addMovement(nodeId, m);
+                ++loaded;
+            }
+            catch(const std::exception&)
+            {
+                // skip malformed row
+            }
+        }
+        LOG_INFO("loaded {count} movements from {file}", PARAM(count, loaded),
                  PARAM(file, path.string()));
         return true;
     }

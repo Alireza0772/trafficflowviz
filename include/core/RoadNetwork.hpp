@@ -86,6 +86,17 @@ namespace tfv
         /** All signs in the network. */
         const std::unordered_map<uint32_t, Sign>& signs() const { return m_signs; }
 
+        // --- Permitted movements (Phase C). A node with NO movement entries permits every
+        //     movement (the no-op-when-absent default), so existing nets stay byte-identical.
+        void addMovement(uint32_t nodeId, const Movement& m);
+        /** Optional sidecar (nodeId,inSeg,outSeg[,turn]); missing file is a no-op (false). */
+        bool loadMovementsCSV(const std::filesystem::path& path);
+        bool hasMovementTable(uint32_t nodeId) const { return m_movements.count(nodeId) != 0; }
+        /** Is the (inSeg -> outSeg) turn legal? True when the turn's node has no table. */
+        bool movementAllowed(uint32_t inSeg, uint32_t outSeg) const;
+        /** Turn category from segment geometry (cross/dot of unit dirs). */
+        TurnType turnTypeFor(uint32_t inSeg, uint32_t outSeg) const;
+
         /** Create signalized intersections at every node with >= minApproaches
          *  incoming segments (Phase 4). Idempotent (rebuilds from scratch). */
         void buildIntersections(int minApproaches = 2);
@@ -108,6 +119,7 @@ namespace tfv
             m_nodes.clear();
             m_signs.clear();
             m_intersections.clear();
+            m_movements.clear();
         }
 
       private:
@@ -118,6 +130,7 @@ namespace tfv
         std::unordered_map<uint32_t, Node> m_nodes;
         std::unordered_map<uint32_t, Sign> m_signs;
         std::unordered_map<uint32_t, Intersection> m_intersections; // keyed by nodeId
+        std::unordered_map<uint32_t, std::vector<Movement>> m_movements; // keyed by nodeId (Phase C)
     };
 
 } // namespace tfv
