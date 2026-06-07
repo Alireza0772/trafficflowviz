@@ -177,7 +177,7 @@ The agent-based simulation core (Phases 0–7) and the pluggable brain backends 
 
 ## License & citation
 
-- Intended license: **MIT** — but **no `LICENSE` file is committed yet**; add one before any external use.
+- Code: **MIT License** — see [`LICENSE`](LICENSE).
 - Vendored dependencies keep their own licenses (ImGui — MIT; SDL2 — zlib).
 - If you use TFV in academic work, please cite:
 
