@@ -814,6 +814,8 @@ struct TwoWayResult
 {
     uint64_t digest{0};
     float ySep{0.0f};
+    float minSep{1e9f};  // smallest opposing separation observed during the run
+    float diagSep{0.0f}; // separation on a 45-degree two-way road (orientation independence)
     bool paired{false};
     bool routed{false};
     bool finite{true};
@@ -874,6 +876,43 @@ static TwoWayResult twoWayRun()
             if(!std::isfinite(vv.worldPos.x) || !std::isfinite(vv.worldPos.y))
                 r.finite = false;
         }
+        // Separation must HOLD across the whole run, not just at init.
+        r.minSep = std::min(r.minSep, std::fabs(snap.at(1).worldPos.y - snap.at(2).worldPos.y));
+    }
+
+    // Orientation independence: a 45-degree two-way road must separate by the same
+    // 2*halfMedian, measured as the full distance (not just the y-component).
+    {
+        RoadNetwork dnet;
+        Node da, db;
+        da.id = 1;
+        da.pos = {0, 0};
+        db.id = 2;
+        db.pos = {700, 700};
+        dnet.addNode(da);
+        dnet.addNode(db);
+        RoadSegment ds{};
+        ds.id = 10;
+        ds.fromNode = 1;
+        ds.toNode = 2;
+        ds.dir = glm::normalize(glm::vec2(1, 1));
+        ds.length = std::sqrt(700.0f * 700.0f + 700.0f * 700.0f);
+        ds.lanes = 1;
+        dnet.addSegment(ds);                                    // forward first
+        const uint32_t dRev = dnet.makeTwoWay(10, 3.5f, 3.5f);  // then synthesize the reverse
+        Simulation dsim(&dnet);
+        std::vector<Vehicle> dv(2);
+        dv[0].id = 1;
+        dv[0].segmentId = 10;
+        dv[0].position = 0.5f;
+        dv[0].vel = {10.0f, 0.0f};
+        dv[1].id = 2;
+        dv[1].segmentId = dRev;
+        dv[1].position = 0.5f;
+        dv[1].vel = {10.0f, 0.0f};
+        dsim.initialize(std::move(dv));
+        const auto ds0 = dsim.snapshot();
+        r.diagSep = glm::distance(ds0.at(1).worldPos, ds0.at(2).worldPos);
     }
     std::vector<uint64_t> ids;
     for(const auto& [id, vv] : snap)
@@ -1208,6 +1247,18 @@ int main(int argc, char** argv)
         {
             std::printf("FAIL: two-way median did not separate opposing directions (ySep=%.2f)\n",
                         tw.ySep);
+            ++failures;
+        }
+        if(tw.minSep < 6.0f) // separation must hold across the whole run, not just at init
+        {
+            std::printf("FAIL: two-way separation collapsed during the run (minSep=%.2f)\n",
+                        tw.minSep);
+            ++failures;
+        }
+        if(std::fabs(tw.diagSep - 7.0f) > 0.25f) // diagonal road: full distance == 2*halfMedian
+        {
+            std::printf("FAIL: diagonal two-way separation %.2f != 7 (normal mixing bug?)\n",
+                        tw.diagSep);
             ++failures;
         }
         if(!tw.finite)

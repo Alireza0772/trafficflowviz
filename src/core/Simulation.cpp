@@ -499,7 +499,20 @@ namespace tfv
                toNode->outgoing.end())
                 return want;
         }
-        return toNode->outgoing[0];
+        // Fallback: the first outgoing that is NOT a U-turn back the way we came (the paired
+        // reverse of a two-way road, or any edge returning to our origin node), so a car
+        // never looks ahead into the oncoming direction. One-way nets have no such edge, so
+        // this returns outgoing[0] exactly as before (digest-neutral).
+        for(uint32_t outId : toNode->outgoing)
+        {
+            if(seg.pairId != 0 && outId == seg.pairId)
+                continue; // the paired reverse of a two-way road (pairId 0 = one-way)
+            const RoadSegment* o = m_roadNetwork->getSegment(outId);
+            if(o && o->oneway == false && o->toNode == seg.fromNode)
+                continue; // a two-way edge returning to our origin node (a U-turn)
+            return outId;
+        }
+        return UINT32_MAX; // only a U-turn available (dead end) => no downstream lookahead
     }
 
     glm::vec2 Simulation::segWorldPos(const RoadSegment& seg, float position, uint8_t laneIndex) const

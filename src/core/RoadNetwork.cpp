@@ -362,13 +362,20 @@ namespace tfv
             0.5f * static_cast<float>(fLanes) * laneWidth + 0.5f * medianWidth;
 
         // Fresh reverse id above all current ids (deterministic, collision-checked).
-        uint32_t revId = 1;
+        uint32_t maxId = 0;
         for(const auto& [id, s] : m_segments)
         {
             (void)s;
-            if(id >= revId)
-                revId = id + 1;
+            if(id > maxId)
+                maxId = id;
         }
+        if(maxId == UINT32_MAX) // pathological CSV: no headroom for a synthetic id
+        {
+            LOG_ERROR("[Road] cannot make segment {id} two-way: id space exhausted",
+                      PARAM(id, forwardId));
+            return 0;
+        }
+        uint32_t revId = maxId + 1;
         while(m_segments.count(revId))
             ++revId;
 
@@ -418,6 +425,7 @@ namespace tfv
             {
                 vis.medianOffset = halfMedian;
                 vis.pairId = revId;
+                break; // exactly one forward visual
             }
         return revId;
     }
