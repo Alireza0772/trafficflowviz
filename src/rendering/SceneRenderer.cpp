@@ -9,7 +9,7 @@ namespace tfv
 {
     void SceneRenderer::draw(const VehicleMap& vehicles)
     {
-        RoadRenderer roadR(m_r, m_panX, m_panY, m_scale, m_antiAliasing);
+        RoadRenderer roadR(m_r, m_panX, m_panY, m_scale, m_antiAliasing, themePalette(m_theme));
         roadR.draw(m_net);
         VehicleRenderer vehR(m_r, m_panX, m_panY, m_scale, m_antiAliasing, m_encoding);
         vehR.draw(vehicles, m_net);
@@ -154,27 +154,30 @@ namespace tfv
             auto b2 = toScreen(x2 - nx * half, y2 - ny * half);
 
             // Asphalt ribbon (filled quad a1 -> a2 -> b2 -> b1).
-            auto V = [](std::pair<int, int> p) {
+            auto V = [&](std::pair<int, int> p) {
                 return RVertex{static_cast<float>(p.first), static_cast<float>(p.second),
-                               52, 56, 64, 255};
+                               m_pal.asphalt.r, m_pal.asphalt.g, m_pal.asphalt.b, 255};
             };
             m_r->fillQuad(V(a1), V(a2), V(b2), V(b1));
 
             // Solid lane-edge lines.
-            m_r->setColor(96, 100, 110, 255);
+            m_r->setColor(m_pal.edge.r, m_pal.edge.g, m_pal.edge.b, 255);
             m_r->drawLine(a1.first, a1.second, a2.first, a2.second, 1);
             m_r->drawLine(b1.first, b1.second, b2.first, b2.second, 1);
 
             // Dashed centerline ALONG the road (the old code dashed across it).
             auto cs = toScreen(x1, y1), ce = toScreen(x2, y2);
-            m_r->setColor(210, 200, 120, 200);
+            m_r->setColor(m_pal.center.r, m_pal.center.g, m_pal.center.b, 200);
             drawDashedLine(cs.first, cs.second, ce.first, ce.second);
         }
     }
 
     void RoadRenderer::drawDashedLine(int x1, int y1, int x2, int y2)
     {
-        const int dashLen = 4, gapLen = 4;
+        // Scale the dash pattern with zoom so it reads consistently (and avoids a huge
+        // number of sub-quads on long segments at high zoom).
+        const int dashLen = std::max(3, static_cast<int>(m_scale * 1.5f));
+        const int gapLen = dashLen;
         float dx = x2 - x1, dy = y2 - y1;
         float dist = std::sqrt(dx * dx + dy * dy);
         if(dist == 0)

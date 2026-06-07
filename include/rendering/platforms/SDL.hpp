@@ -2,6 +2,7 @@
 #include "rendering/Renderer.hpp"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
+#include <vector>
 namespace tfv
 {
     class SDLRenderer : public Renderer
@@ -42,6 +43,7 @@ namespace tfv
         SDL_Renderer* m_renderer;
         SDL_Window* m_window;
         bool m_antiAliasingEnabled;
-        TTF_Font* m_font{nullptr}; // cached UI font (opened once in initialize())
+        TTF_Font* m_font{nullptr};            // cached UI font (opened once in initialize())
+        std::vector<SDL_Vertex> m_geomScratch; // reused by fillGeometry (avoid per-call alloc)
     };
 } // namespace tfv

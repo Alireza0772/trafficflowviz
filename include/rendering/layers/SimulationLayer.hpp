@@ -66,6 +66,21 @@ namespace tfv
             return m_sceneRenderer ? m_sceneRenderer->colorEncoding() : ColorEncoding::Speed;
         }
 
+        // Scene theme (studio dark / paper light) + the resulting background clear color.
+        void setSceneTheme(SceneTheme t)
+        {
+            if(m_sceneRenderer)
+                m_sceneRenderer->setSceneTheme(t);
+        }
+        SceneTheme sceneTheme() const
+        {
+            return m_sceneRenderer ? m_sceneRenderer->sceneTheme() : SceneTheme::StudioDark;
+        }
+        RGB8 backgroundColor() const
+        {
+            return m_sceneRenderer ? m_sceneRenderer->backgroundColor() : RGB8{24, 26, 32};
+        }
+
       private:
         // drawable-pixels / window-points (1.0 except on hi-DPI displays)
         float framebufferScale() const;

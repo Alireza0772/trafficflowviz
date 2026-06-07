@@ -451,7 +451,9 @@ namespace tfv
 
     void Engine::render()
     {
-        m_renderer->clear(24, 26, 32, 255); // dark "studio" backdrop so the scene reads
+        // Background follows the active scene theme (studio dark / paper light).
+        const RGB8 bg = m_simulationLayer ? m_simulationLayer->backgroundColor() : RGB8{24, 26, 32};
+        m_renderer->clear(bg.r, bg.g, bg.b, 255);
 
         // Render all layers
         m_layerStack.onRender();

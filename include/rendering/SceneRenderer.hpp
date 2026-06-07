@@ -14,9 +14,10 @@ namespace tfv
     class RoadRenderer
     {
       public:
-        RoadRenderer(Renderer* renderer, int panX, int panY, float scale, bool antiAliasing = false)
+        RoadRenderer(Renderer* renderer, int panX, int panY, float scale, bool antiAliasing = false,
+                     ThemePalette pal = themePalette(SceneTheme::StudioDark))
             : m_r(renderer), m_panX(panX), m_panY(panY), m_scale(scale), roadWidth{10.f},
-              m_antiAliasing{antiAliasing}
+              m_antiAliasing{antiAliasing}, m_pal(pal)
         {
             // Apply anti-aliasing setting to the renderer
             if(m_r)
@@ -33,6 +34,7 @@ namespace tfv
         float m_scale;
         float roadWidth{10.f};
         bool m_antiAliasing{false};
+        ThemePalette m_pal{themePalette(SceneTheme::StudioDark)};
         void drawDashedLine(int x1, int y1, int x2, int y2);
     };
 
@@ -98,6 +100,10 @@ namespace tfv
         void setColorEncoding(ColorEncoding e) { m_encoding = e; }
         ColorEncoding colorEncoding() const { return m_encoding; }
 
+        void setSceneTheme(SceneTheme t) { m_theme = t; }
+        SceneTheme sceneTheme() const { return m_theme; }
+        RGB8 backgroundColor() const { return themePalette(m_theme).bg; }
+
       private:
         void drawSigns();  // draw traffic signs as small colored markers
         void drawLights(); // draw traffic-light state per intersection approach
@@ -109,6 +115,7 @@ namespace tfv
         int m_panY{0};
         bool m_antiAliasing{true};
         ColorEncoding m_encoding{ColorEncoding::Speed};
+        SceneTheme m_theme{SceneTheme::StudioDark};
 
         // Store the last simulation snapshot
         VehicleMap m_lastSnapshot;

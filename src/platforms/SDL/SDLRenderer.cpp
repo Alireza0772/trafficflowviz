@@ -179,13 +179,13 @@ namespace tfv
 #if SDL_VERSION_ATLEAST(2, 0, 18)
         if(vcount <= 0 || icount <= 0)
             return;
-        std::vector<SDL_Vertex> sv(static_cast<std::size_t>(vcount));
+        m_geomScratch.resize(static_cast<std::size_t>(vcount)); // reused; no per-call heap churn
         for(int i = 0; i < vcount; ++i)
-            sv[static_cast<std::size_t>(i)] =
+            m_geomScratch[static_cast<std::size_t>(i)] =
                 SDL_Vertex{{verts[i].x, verts[i].y},
                            {verts[i].r, verts[i].g, verts[i].b, verts[i].a},
                            {0.0f, 0.0f}};
-        SDL_RenderGeometry(m_renderer, nullptr, sv.data(), vcount, idx, icount);
+        SDL_RenderGeometry(m_renderer, nullptr, m_geomScratch.data(), vcount, idx, icount);
 #else
         (void)verts;
         (void)vcount;

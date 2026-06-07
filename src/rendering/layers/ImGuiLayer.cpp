@@ -256,6 +256,23 @@ namespace tfv
                 if(ImGui::MenuItem("Legend", nullptr, &legend))
                     m_showLegend = legend;
 
+                // Scene theme (also swaps the ImGui style to match).
+                if(m_simulationLayer && ImGui::BeginMenu("Theme"))
+                {
+                    const SceneTheme th = m_simulationLayer->sceneTheme();
+                    if(ImGui::MenuItem("Studio Dark", nullptr, th == SceneTheme::StudioDark))
+                    {
+                        m_simulationLayer->setSceneTheme(SceneTheme::StudioDark);
+                        ImGui::StyleColorsDark();
+                    }
+                    if(ImGui::MenuItem("Paper Light", nullptr, th == SceneTheme::PaperLight))
+                    {
+                        m_simulationLayer->setSceneTheme(SceneTheme::PaperLight);
+                        ImGui::StyleColorsLight();
+                    }
+                    ImGui::EndMenu();
+                }
+
                 // Toggle layers
                 if(m_simulationLayer)
                 {

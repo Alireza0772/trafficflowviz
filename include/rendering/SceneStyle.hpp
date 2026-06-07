@@ -36,6 +36,27 @@ namespace tfv
         uint8_t r, g, b;
     };
 
+    // Scene theme: dark "studio" (default, for talks/screens) vs light "paper" (figures).
+    enum class SceneTheme
+    {
+        StudioDark,
+        PaperLight
+    };
+    inline const char* themeName(SceneTheme t)
+    {
+        return t == SceneTheme::PaperLight ? "Paper Light" : "Studio Dark";
+    }
+    struct ThemePalette
+    {
+        RGB8 bg, asphalt, edge, center;
+    };
+    inline ThemePalette themePalette(SceneTheme t)
+    {
+        if(t == SceneTheme::PaperLight)
+            return {{236, 238, 242}, {206, 211, 217}, {140, 146, 154}, {170, 150, 60}};
+        return {{24, 26, 32}, {52, 56, 64}, {96, 100, 110}, {210, 200, 120}};
+    }
+
     namespace style_detail
     {
         inline RGB8 lerp8(RGB8 a, RGB8 b, float u)
