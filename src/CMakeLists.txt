@@ -13,6 +13,7 @@ set(TRAFFICFLOWVIZ_SOURCES
     agents/VtableBrain.cpp
     agents/NNBrain.cpp
     agents/DllBrain.cpp
+    agents/PythonBrain.cpp
 
     # Control
     control/LightController.cpp
@@ -75,6 +76,16 @@ target_include_directories(trafficflowviz_lib PUBLIC
     ${CMAKE_SOURCE_DIR}/include
     ${GLM_INCLUDE_DIRS}
 )
+
+# Embedded-Python brain backend (opt-in). PythonBrain.cpp is always compiled (a
+# dependency-free stub when OFF); enabling links an embedded CPython interpreter.
+if(TFV_WITH_PYTHON)
+    find_package(Python3 REQUIRED COMPONENTS Development.Embed Interpreter)
+    find_package(pybind11 REQUIRED)
+    target_link_libraries(trafficflowviz_lib PUBLIC pybind11::embed)
+    target_compile_definitions(trafficflowviz_lib PUBLIC TFV_WITH_PYTHON)
+    message(STATUS "Embedded Python: linking pybind11::embed (Python3 ${Python3_VERSION})")
+endif()
 
 # Print include directories for this target
 get_target_property(include_dirs trafficflowviz_lib INCLUDE_DIRECTORIES)

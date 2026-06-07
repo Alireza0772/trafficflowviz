@@ -2,6 +2,7 @@
 
 #include "agents/DllBrain.hpp"
 #include "agents/NNBrain.hpp"
+#include "agents/PythonBrain.hpp"
 #include "agents/RuleBasedBrain.hpp"
 #include "core/Configuration.hpp"
 #include "utils/LoggingManager.hpp"
@@ -69,6 +70,31 @@ namespace tfv
             if(auto b = loadDllBrain(path, config))
                 return b;
             LOG_WARN("DLL brain load failed; falling back to 'rule'");
+            return std::make_unique<RuleBasedBrain>(idm);
+        }
+
+        // Embedded Python: "python:<module>[:func][?config]". Split ?config first, then
+        // the LAST ':' of the remainder as the optional function (default decide_batch).
+        if(kind.rfind("python:", 0) == 0)
+        {
+            std::string rest = kind.substr(7);
+            std::string config;
+            const auto q = rest.find('?');
+            if(q != std::string::npos)
+            {
+                config = rest.substr(q + 1);
+                rest = rest.substr(0, q);
+            }
+            std::string module = rest, func;
+            const auto colon = rest.rfind(':');
+            if(colon != std::string::npos)
+            {
+                module = rest.substr(0, colon);
+                func = rest.substr(colon + 1);
+            }
+            if(auto b = loadPythonBrain(module, func, config, idm))
+                return b;
+            LOG_WARN("Python brain load failed; falling back to 'rule'");
             return std::make_unique<RuleBasedBrain>(idm);
         }
 
