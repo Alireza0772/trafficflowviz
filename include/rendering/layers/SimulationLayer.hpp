@@ -55,6 +55,17 @@ namespace tfv
             return glm::vec2(world.x * getZoom() + getPanX(), world.y * getZoom() + getPanY());
         }
 
+        // Vehicle color encoding (forwarded to the scene renderer) — for the legend + menu.
+        void setColorEncoding(ColorEncoding e)
+        {
+            if(m_sceneRenderer)
+                m_sceneRenderer->setColorEncoding(e);
+        }
+        ColorEncoding colorEncoding() const
+        {
+            return m_sceneRenderer ? m_sceneRenderer->colorEncoding() : ColorEncoding::Speed;
+        }
+
       private:
         // drawable-pixels / window-points (1.0 except on hi-DPI displays)
         float framebufferScale() const;

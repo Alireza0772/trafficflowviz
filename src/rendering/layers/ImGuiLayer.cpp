@@ -119,6 +119,11 @@ namespace tfv
             renderVehicleInspector();
         }
 
+        if(m_showLegend)
+        {
+            renderLegend();
+        }
+
         // Render status bar at the bottom
         renderStatusBar();
 
@@ -230,6 +235,26 @@ namespace tfv
                     if(ImGui::MenuItem("Perception Overlay", nullptr, &overlay)) // menu-only
                         m_debugPerceptionLayer->setEnabled(overlay);
                 }
+
+                // Vehicle color encoding + legend
+                if(m_simulationLayer)
+                {
+                    const ColorEncoding cur = m_simulationLayer->colorEncoding();
+                    if(ImGui::BeginMenu("Color"))
+                    {
+                        if(ImGui::MenuItem("Speed", nullptr, cur == ColorEncoding::Speed))
+                            m_simulationLayer->setColorEncoding(ColorEncoding::Speed);
+                        if(ImGui::MenuItem("Lane", nullptr, cur == ColorEncoding::Lane))
+                            m_simulationLayer->setColorEncoding(ColorEncoding::Lane);
+                        if(ImGui::MenuItem("Vehicle Class", nullptr,
+                                           cur == ColorEncoding::VehicleClass))
+                            m_simulationLayer->setColorEncoding(ColorEncoding::VehicleClass);
+                        ImGui::EndMenu();
+                    }
+                }
+                bool legend = m_showLegend;
+                if(ImGui::MenuItem("Legend", nullptr, &legend))
+                    m_showLegend = legend;
 
                 // Toggle layers
                 if(m_simulationLayer)
@@ -433,6 +458,60 @@ namespace tfv
                     }
                 }
             }
+        }
+        ImGui::End();
+    }
+
+    void ImGuiLayer::renderLegend()
+    {
+        if(ImGui::Begin("Legend", &m_showLegend))
+        {
+            const ColorEncoding e =
+                m_simulationLayer ? m_simulationLayer->colorEncoding() : ColorEncoding::Speed;
+            ImGui::Text("Vehicle color: %s", encodingName(e));
+            ImGui::Separator();
+            if(e == ColorEncoding::Speed)
+            {
+                const ImVec2 p = ImGui::GetCursorScreenPos();
+                const float w = 180.0f, h = 14.0f;
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                const ImU32 g = IM_COL32(46, 204, 113, 255);
+                const ImU32 a = IM_COL32(241, 196, 15, 255);
+                const ImU32 r = IM_COL32(231, 76, 60, 255);
+                dl->AddRectFilledMultiColor(p, ImVec2(p.x + w * 0.5f, p.y + h), g, a, a, g);
+                dl->AddRectFilledMultiColor(ImVec2(p.x + w * 0.5f, p.y), ImVec2(p.x + w, p.y + h), a,
+                                            r, r, a);
+                ImGui::Dummy(ImVec2(w, h));
+                ImGui::Text("0");
+                ImGui::SameLine(w - 56.0f);
+                ImGui::Text("13.9 m/s");
+            }
+            else
+            {
+                auto swatch = [&](RGB8 c, const char* label) {
+                    ImGui::ColorButton(label,
+                                       ImVec4(c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, 1.0f),
+                                       ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker,
+                                       ImVec2(16, 16));
+                    ImGui::SameLine();
+                    ImGui::TextUnformatted(label);
+                };
+                if(e == ColorEncoding::Lane)
+                {
+                    const char* names[] = {"Lane 0", "Lane 1", "Lane 2", "Lane 3"};
+                    for(int i = 0; i < 4; ++i)
+                        swatch(laneRGB(static_cast<uint8_t>(i)), names[i]);
+                }
+                else
+                {
+                    const char* types[] = {"car", "truck", "bus", "emergency"};
+                    for(const char* t : types)
+                        swatch(classRGB(t), t);
+                }
+            }
+            ImGui::Separator();
+            if(m_simulation)
+                ImGui::Text("Brain: %s", m_simulation->brainKind().c_str());
         }
         ImGui::End();
     }

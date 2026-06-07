@@ -68,10 +68,12 @@ namespace tfv
         // Vehicle inspector (Phase 7 observability): shows the selected vehicle's
         // observation/action/sectors/violations from Simulation::inspect().
         void renderVehicleInspector();
+        void renderLegend(); // color-encoding legend (gradient / swatches)
 
         bool m_initialized{false};
         bool m_showKeybindings{false};
         bool m_showInspector{false};
+        bool m_showLegend{false};
         bool m_exportEnabled{false};
         ExportToggleCallback m_exportToggleCallback;
 

@@ -7,34 +7,11 @@
 
 namespace tfv
 {
-    namespace
-    {
-        struct RGB
-        {
-            uint8_t r, g, b;
-        };
-        inline RGB lerpRGB(RGB a, RGB b, float u)
-        {
-            auto L = [&](uint8_t x, uint8_t y) {
-                return static_cast<uint8_t>(x + std::lround((static_cast<int>(y) - x) * u));
-            };
-            return {L(a.r, b.r), L(a.g, b.g), L(a.b, b.b)};
-        }
-        // Speed -> green->amber->red gradient, normalized by the desired-speed cap.
-        inline RGB speedColor(float speed, float v0)
-        {
-            float t = speed / (v0 > 0.1f ? v0 : 13.9f);
-            t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
-            const RGB lo{46, 204, 113}, mid{241, 196, 15}, hi{231, 76, 60};
-            return t < 0.5f ? lerpRGB(lo, mid, t / 0.5f) : lerpRGB(mid, hi, (t - 0.5f) / 0.5f);
-        }
-    } // namespace
-
     void SceneRenderer::draw(const VehicleMap& vehicles)
     {
         RoadRenderer roadR(m_r, m_panX, m_panY, m_scale, m_antiAliasing);
         roadR.draw(m_net);
-        VehicleRenderer vehR(m_r, m_panX, m_panY, m_scale, m_antiAliasing);
+        VehicleRenderer vehR(m_r, m_panX, m_panY, m_scale, m_antiAliasing, m_encoding);
         vehR.draw(vehicles, m_net);
 
         drawSigns();
@@ -225,8 +202,9 @@ namespace tfv
     }
 
     VehicleRenderer::VehicleRenderer(Renderer* renderer, int panX, int panY, float scale,
-                                     bool antiAliasing)
-        : m_r(renderer), m_panX(panX), m_panY(panY), m_scale(scale), m_antiAliasing(antiAliasing)
+                                     bool antiAliasing, ColorEncoding encoding)
+        : m_r(renderer), m_panX(panX), m_panY(panY), m_scale(scale), m_antiAliasing(antiAliasing),
+          m_encoding(encoding)
     {
         // Set anti-aliasing on the renderer
         m_r->setAntiAliasing(antiAliasing);
@@ -244,7 +222,7 @@ namespace tfv
             const float sx = v.worldPos.x * m_scale + static_cast<float>(m_panX);
             const float sy = v.worldPos.y * m_scale + static_cast<float>(m_panY);
 
-            const RGB c = speedColor(glm::length(v.vel), v0);
+            const RGB8 c = encodeVehicleColor(v, m_encoding, v0);
 
             if(m_scale < 1.5f)
             {

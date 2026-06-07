@@ -6,6 +6,7 @@
 #include "core/RoadNetwork.hpp"
 #include "core/Simulation.hpp"
 #include "rendering/Renderer.hpp"
+#include "rendering/SceneStyle.hpp"
 
 namespace tfv
 {
@@ -39,7 +40,7 @@ namespace tfv
     {
       public:
         VehicleRenderer(Renderer* renderer, int panX, int panY, float scale,
-                        bool antiAliasing = false);
+                        bool antiAliasing = false, ColorEncoding encoding = ColorEncoding::Speed);
         void draw(const VehicleMap& vehicles, const RoadNetwork* net);
         void setAntiAliasing(bool enable) { m_antiAliasing = enable; }
 
@@ -48,6 +49,7 @@ namespace tfv
         int m_panX, m_panY;
         float m_scale;
         bool m_antiAliasing{false};
+        ColorEncoding m_encoding{ColorEncoding::Speed};
     };
 
     /** Immediate‑mode renderer for roads + vehicles (API-agnostic). */
@@ -93,6 +95,9 @@ namespace tfv
         bool getAntiAliasing() const { return m_antiAliasing; }
         const RoadNetwork* getNetwork() const { return m_net; }
 
+        void setColorEncoding(ColorEncoding e) { m_encoding = e; }
+        ColorEncoding colorEncoding() const { return m_encoding; }
+
       private:
         void drawSigns();  // draw traffic signs as small colored markers
         void drawLights(); // draw traffic-light state per intersection approach
@@ -103,6 +108,7 @@ namespace tfv
         int m_panX{0};
         int m_panY{0};
         bool m_antiAliasing{true};
+        ColorEncoding m_encoding{ColorEncoding::Speed};
 
         // Store the last simulation snapshot
         VehicleMap m_lastSnapshot;
