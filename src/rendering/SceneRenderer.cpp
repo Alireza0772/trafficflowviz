@@ -137,12 +137,13 @@ namespace tfv
             if(deg == 0)
                 continue;
             const auto p = toScreen(n->pos.x, n->pos.y);
-            const int sz = std::max(4, std::min(16, 3 + deg * 2));
+            const float sz = static_cast<float>(std::max(4, std::min(16, 3 + deg * 2)));
             if(n->junction == JunctionStyle::ROUNDABOUT)
-                m_r->setColor(90, 200, 120, 255);
+                m_r->fillCircle(static_cast<float>(p.first), static_cast<float>(p.second),
+                                sz * 0.5f, 90, 200, 120, 255, 16);
             else
-                m_r->setColor(235, 235, 245, 255);
-            m_r->fillRect(p.first - sz / 2, p.second - sz / 2, sz, sz);
+                m_r->fillCircle(static_cast<float>(p.first), static_cast<float>(p.second),
+                                sz * 0.5f, 235, 235, 245, 255, 14);
         }
         // Vehicles as small dots, colored by the active encoding.
         const float v0 = 13.9f;
@@ -151,9 +152,9 @@ namespace tfv
             (void)vid;
             const auto p = toScreen(v.worldPos.x, v.worldPos.y);
             const RGB8 c = encodeVehicleColor(v, m_encoding, v0);
-            m_r->setColor(c.r, c.g, c.b, 255);
-            const int d = std::max(2, static_cast<int>(m_scale * 1.2f));
-            m_r->fillRect(p.first - d / 2, p.second - d / 2, d, d);
+            const float d = std::max(2.0f, m_scale * 1.2f);
+            m_r->fillCircle(static_cast<float>(p.first), static_cast<float>(p.second), d * 0.5f,
+                            c.r, c.g, c.b, 255, 10);
         }
     }
 
@@ -163,45 +164,8 @@ namespace tfv
             return;
         const ThemePalette pal = themePalette(m_theme);
         const float laneWpx = 3.5f;
-        // Filled disc (triangle fan) + circle outline, both in framebuffer pixels.
-        auto disc = [&](float cx, float cy, float rad, RGB8 col) {
-            if(rad < 1.0f)
-                rad = 1.0f;
-            const int SEG = 22;
-            RVertex v[SEG + 1];
-            v[0] = RVertex{cx, cy, col.r, col.g, col.b, 255};
-            for(int i = 0; i < SEG; ++i)
-            {
-                const float a = 6.2831853f * static_cast<float>(i) / SEG;
-                v[i + 1] = RVertex{cx + std::cos(a) * rad, cy + std::sin(a) * rad,
-                                   col.r, col.g, col.b, 255};
-            }
-            int idx[SEG * 3];
-            for(int i = 0; i < SEG; ++i)
-            {
-                idx[i * 3 + 0] = 0;
-                idx[i * 3 + 1] = i + 1;
-                idx[i * 3 + 2] = (i + 1) % SEG + 1;
-            }
-            m_r->fillGeometry(v, SEG + 1, idx, SEG * 3);
-        };
-        auto ring = [&](float cx, float cy, float rad, RGB8 col, int w) {
-            const int SEG = 26;
-            m_r->setColor(col.r, col.g, col.b, 255);
-            float px = cx + rad, py = cy;
-            for(int i = 1; i <= SEG; ++i)
-            {
-                const float a = 6.2831853f * static_cast<float>(i) / SEG;
-                const float x = cx + std::cos(a) * rad, y = cy + std::sin(a) * rad;
-                m_r->drawLine(static_cast<int>(px), static_cast<int>(py), static_cast<int>(x),
-                              static_cast<int>(y), w);
-                px = x;
-                py = y;
-            }
-        };
-        // ONLY roundabouts get a drawn shape (the round island). 3-/4-way junctions are just the
-        // road crossing itself (marked by their signal head) — drawing a disc there made them
-        // look like roundabouts, which they are not.
+        // ONLY roundabouts get a drawn shape (the round island, via true vector circles). 3-/4-way
+        // junctions are just the road crossing itself, marked by their signal head.
         for(uint32_t id : m_net->getNodeIds())
         {
             const Node* n = m_net->getNode(id);
@@ -214,16 +178,17 @@ namespace tfv
                 // Topological roundabout: the ring ROADS already draw the circle, so just fill
                 // the centre island inside them.
                 const float islandR = std::max(3.0f, (n->roundaboutR - laneWpx * 1.2f)) * m_scale;
-                disc(cx, cy, islandR, RGB8{58, 102, 66});
+                m_r->fillCircle(cx, cy, islandR, 58, 102, 66, 255);
             }
             else
             {
-                // Visual-only roundabout (too few arms to ring): a paved disc + ring + island.
+                // Visual-only roundabout (too few arms to ring): paved disc + lane ring + island.
                 const int deg = static_cast<int>(std::max(n->incoming.size(), n->outgoing.size()));
                 const float rad = std::max(7.0f, std::min(30.0f, deg * 3.2f)) * m_scale;
-                disc(cx, cy, rad, pal.asphalt);
-                ring(cx, cy, rad, pal.center, std::max(1, static_cast<int>(m_scale)));
-                disc(cx, cy, rad * 0.45f, RGB8{58, 102, 66});
+                m_r->fillCircle(cx, cy, rad, pal.asphalt.r, pal.asphalt.g, pal.asphalt.b, 255);
+                m_r->strokeCircle(cx, cy, rad, std::max(1.0f, m_scale), pal.center.r, pal.center.g,
+                                  pal.center.b, 255);
+                m_r->fillCircle(cx, cy, rad * 0.45f, 58, 102, 66, 255);
             }
         }
     }
@@ -289,29 +254,46 @@ namespace tfv
     {
         if(!net)
             return;
-        // Per-lane width in world units (== sim.lane_width_m default, which is also what
-        // makeTwoWay uses for the median). Keeping the renderer and the median math on the
-        // SAME lane width is what makes the two carriageways leave a clean median gap.
-        const float laneWpx = 3.5f;
+        const float laneWpx = 3.5f; // per-lane width (world == px), matches makeTwoWay's median math
         const auto& segs = net->segments();
+
+        auto shade = [](RGB8 base, float f) -> RGB8 {
+            auto cl = [](float v) {
+                return static_cast<uint8_t>(std::max(0.0f, std::min(255.0f, v)));
+            };
+            return RGB8{cl(base.r * f), cl(base.g * f), cl(base.b * f)};
+        };
+        // Offset a world polyline sideways by `off` along its per-point normals (averaged
+        // tangents -> a smooth offset that follows curves).
+        auto offsetPoly = [](const std::vector<glm::vec2>& c, float off) {
+            const std::size_t n = c.size();
+            std::vector<glm::vec2> o(n);
+            for(std::size_t i = 0; i < n; ++i)
+            {
+                glm::vec2 t(0.0f, 0.0f);
+                if(i + 1 < n) t += c[i + 1] - c[i];
+                if(i > 0) t += c[i] - c[i - 1];
+                const float L = glm::length(t);
+                o[i] = (L > 1e-5f) ? c[i] + glm::vec2(-t.y / L, t.x / L) * off : c[i];
+            }
+            return o;
+        };
+        auto toScreen = [&](const std::vector<glm::vec2>& w) {
+            std::vector<glm::vec2> s(w.size());
+            for(std::size_t i = 0; i < w.size(); ++i)
+                s[i] = glm::vec2(w[i].x * m_scale + static_cast<float>(m_panX),
+                                 w[i].y * m_scale + static_cast<float>(m_panY));
+            return s;
+        };
+
         for(const auto& s : segs)
         {
             const RoadSegment* seg = net->getSegment(s.id);
             const int lanes = seg ? std::max(1, seg->lanes) : 1;
             const float half = lanes * laneWpx * 0.5f;
-            const float medianOffset = s.medianOffset;
             const bool twoway = (s.pairId != 0) || (s.medianOffset != 0.0f);
-            const bool oneWay = seg && seg->oneway && seg->pairId == 0 && seg->roadClass != RoadClass::NONE;
-            auto toScreen = [&](float wx, float wy) {
-                return std::pair<int, int>{static_cast<int>(wx * m_scale) + m_panX,
-                                           static_cast<int>(wy * m_scale) + m_panY};
-            };
-            auto shade = [](RGB8 base, float f) -> RGB8 {
-                auto cl = [](float v) {
-                    return static_cast<uint8_t>(std::max(0.0f, std::min(255.0f, v)));
-                };
-                return RGB8{cl(base.r * f), cl(base.g * f), cl(base.b * f)};
-            };
+            const bool oneWay =
+                seg && seg->oneway && seg->pairId == 0 && seg->roadClass != RoadClass::NONE;
             RGB8 asphalt = m_pal.asphalt;
             switch(s.roadClass)
             {
@@ -321,68 +303,74 @@ namespace tfv
             case RoadClass::LOCAL:     asphalt = shade(m_pal.asphalt, 0.90f); break;
             default:                   break; // NONE (CSV/hand-authored): base asphalt
             }
-            // Draw one straight ribbon span between two world points. A curved road is just a
-            // chain of these along its centerline; a straight road is a single span computed
-            // exactly as before, so straight rendering is byte-identical.
-            auto drawSpan = [&](float wx1, float wy1, float wx2, float wy2) {
-                const float dx = wx2 - wx1, dy = wy2 - wy1;
-                const float len = std::sqrt(dx * dx + dy * dy);
-                if(len < 1e-4f)
-                    return;
-                const float nx = -dy / len, ny = dx / len;
-                const float cx1 = wx1 + nx * medianOffset, cy1 = wy1 + ny * medianOffset;
-                const float cx2 = wx2 + nx * medianOffset, cy2 = wy2 + ny * medianOffset;
-                const auto a1 = toScreen(cx1 + nx * half, cy1 + ny * half);
-                const auto a2 = toScreen(cx2 + nx * half, cy2 + ny * half);
-                const auto b1 = toScreen(cx1 - nx * half, cy1 - ny * half);
-                const auto b2 = toScreen(cx2 - nx * half, cy2 - ny * half);
-                auto V = [&](std::pair<int, int> p) {
-                    return RVertex{static_cast<float>(p.first), static_cast<float>(p.second),
-                                   asphalt.r, asphalt.g, asphalt.b, 255};
-                };
-                m_r->fillQuad(V(a1), V(a2), V(b2), V(b1));
-                m_r->setColor(m_pal.edge.r, m_pal.edge.g, m_pal.edge.b, 255);
-                m_r->drawLine(a1.first, a1.second, a2.first, a2.second, 1);
-                if(twoway)
-                    m_r->setColor(m_pal.center.r, m_pal.center.g, m_pal.center.b, 255);
-                m_r->drawLine(b1.first, b1.second, b2.first, b2.second, twoway ? 2 : 1);
-                if(lanes > 1)
-                {
-                    m_r->setColor(m_pal.center.r, m_pal.center.g, m_pal.center.b, 180);
-                    for(int k = 1; k < lanes; ++k)
-                    {
-                        const float off = half - k * laneWpx;
-                        const auto d1 = toScreen(cx1 + nx * off, cy1 + ny * off);
-                        const auto d2 = toScreen(cx2 + nx * off, cy2 + ny * off);
-                        drawDashedLine(d1.first, d1.second, d2.first, d2.second);
-                    }
-                }
-                // One-way: an amber chevron at the span midpoint pointing along travel direction.
-                if(oneWay)
-                {
-                    const float mx = (cx1 + cx2) * 0.5f, my = (cy1 + cy2) * 0.5f;
-                    const float ux = dx / len, uy = dy / len; // travel dir (A->B)
-                    const float cz = laneWpx * 0.9f;
-                    const auto T = toScreen(mx + ux * cz, my + uy * cz);
-                    const auto Lp = toScreen(mx - ux * cz * 0.4f + nx * cz * 0.7f,
-                                             my - uy * cz * 0.4f + ny * cz * 0.7f);
-                    const auto Rp = toScreen(mx - ux * cz * 0.4f - nx * cz * 0.7f,
-                                             my - uy * cz * 0.4f - ny * cz * 0.7f);
-                    m_r->setColor(250, 225, 110, 255);
-                    m_r->drawLine(Lp.first, Lp.second, T.first, T.second, 1);
-                    m_r->drawLine(Rp.first, Rp.second, T.first, T.second, 1);
-                }
-            };
+
+            // The road's true centerline: the curve points, or the straight endpoints.
+            std::vector<glm::vec2> center;
             if(seg && seg->centerline.size() >= 2)
-            {
-                const auto& cl = seg->centerline;
-                for(std::size_t k = 0; k + 1 < cl.size(); ++k)
-                    drawSpan(cl[k].x, cl[k].y, cl[k + 1].x, cl[k + 1].y);
-            }
+                center = seg->centerline;
             else
+                center = {glm::vec2(static_cast<float>(s.x1), static_cast<float>(s.y1)),
+                          glm::vec2(static_cast<float>(s.x2), static_cast<float>(s.y2))};
+            if(center.size() < 2)
+                continue;
+
+            // This carriageway's centerline (shifted to its side of the median).
+            const std::vector<glm::vec2> carriage = offsetPoly(center, s.medianOffset);
+            const std::vector<glm::vec2> cScr = toScreen(carriage);
+            const float wpx = std::max(1.0f, lanes * laneWpx * m_scale);
+
+            // Asphalt ribbon: one smooth stroke with round joins (no gaps at curve bends).
+            m_r->strokePolyline(cScr.data(), static_cast<int>(cScr.size()), wpx, asphalt.r,
+                                asphalt.g, asphalt.b, 255, true);
+
+            // Edge lines: white outer shoulder; the median-facing edge is a thicker centre-colour
+            // divider on a two-way road, else another white shoulder.
+            const auto outer = toScreen(offsetPoly(carriage, half));
+            const auto inner = toScreen(offsetPoly(carriage, -half));
+            const float ew = std::max(1.0f, m_scale * 0.5f);
+            m_r->strokePolyline(outer.data(), static_cast<int>(outer.size()), ew, m_pal.edge.r,
+                                m_pal.edge.g, m_pal.edge.b, 255, false);
+            if(twoway)
+                m_r->strokePolyline(inner.data(), static_cast<int>(inner.size()),
+                                    std::max(1.0f, m_scale * 0.8f), m_pal.center.r, m_pal.center.g,
+                                    m_pal.center.b, 255, false);
+            else
+                m_r->strokePolyline(inner.data(), static_cast<int>(inner.size()), ew, m_pal.edge.r,
+                                    m_pal.edge.g, m_pal.edge.b, 255, false);
+
+            // Dashed lane dividers between lanes (none on a single-lane carriageway).
+            if(lanes > 1)
             {
-                drawSpan(static_cast<float>(s.x1), static_cast<float>(s.y1),
-                         static_cast<float>(s.x2), static_cast<float>(s.y2));
+                m_r->setColor(m_pal.center.r, m_pal.center.g, m_pal.center.b, 180);
+                for(int k = 1; k < lanes; ++k)
+                {
+                    const auto div = toScreen(offsetPoly(carriage, half - k * laneWpx));
+                    for(std::size_t i = 0; i + 1 < div.size(); ++i)
+                        drawDashedLine(static_cast<int>(div[i].x), static_cast<int>(div[i].y),
+                                       static_cast<int>(div[i + 1].x), static_cast<int>(div[i + 1].y));
+                }
+            }
+
+            // One-way: amber chevrons along the carriageway pointing in travel direction.
+            if(oneWay)
+            {
+                m_r->setColor(250, 225, 110, 255);
+                for(std::size_t i = 0; i + 1 < cScr.size(); ++i)
+                {
+                    glm::vec2 d = cScr[i + 1] - cScr[i];
+                    const float L = glm::length(d);
+                    if(L < 9.0f)
+                        continue;
+                    d /= L;
+                    const glm::vec2 nrm(-d.y, d.x);
+                    const glm::vec2 mid = (cScr[i] + cScr[i + 1]) * 0.5f;
+                    const float cz = std::max(3.0f, laneWpx * m_scale * 0.9f);
+                    const glm::vec2 tip = mid + d * cz;
+                    const glm::vec2 lp = mid - d * (cz * 0.4f) + nrm * (cz * 0.7f);
+                    const glm::vec2 rp = mid - d * (cz * 0.4f) - nrm * (cz * 0.7f);
+                    m_r->drawLine((int)lp.x, (int)lp.y, (int)tip.x, (int)tip.y, 1);
+                    m_r->drawLine((int)rp.x, (int)rp.y, (int)tip.x, (int)tip.y, 1);
+                }
             }
         }
     }

@@ -2,8 +2,10 @@
 #define TFV_RENDERER_HPP
 
 #include <cstdint>
+#include <glm/glm.hpp>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace tfv
 {
@@ -62,6 +64,25 @@ namespace tfv
             const int idx[6] = {0, 1, 2, 0, 2, 3};
             fillGeometry(v, 4, idx, 6);
         }
+
+        // --- Vector primitives. Default impls tessellate via fillGeometry, so every backend
+        //     gets them; a backend (e.g. a future NanoVG) may override for native acceleration.
+        //     Colors are explicit so each fill/stroke is self-contained (no setColor state). ---
+        virtual void fillCircle(float cx, float cy, float radius, uint8_t r, uint8_t g, uint8_t b,
+                                uint8_t a, int segments = 28);
+        virtual void strokeCircle(float cx, float cy, float radius, float width, uint8_t r,
+                                  uint8_t g, uint8_t b, uint8_t a, int segments = 28);
+        // Thick stroked polyline with round joins; closed connects last->first.
+        virtual void strokePolyline(const glm::vec2* pts, int n, float width, uint8_t r, uint8_t g,
+                                    uint8_t b, uint8_t a, bool roundJoin = true, bool closed = false);
+        // Filled (convex) polygon, triangle-fan from pts[0].
+        virtual void fillPolygon(const glm::vec2* pts, int n, uint8_t r, uint8_t g, uint8_t b,
+                                 uint8_t a);
+        // Flatten a quadratic/cubic Bezier into `out` (appends steps+1 points).
+        static void flattenQuadratic(glm::vec2 p0, glm::vec2 c, glm::vec2 p1, int steps,
+                                     std::vector<glm::vec2>& out);
+        static void flattenCubic(glm::vec2 p0, glm::vec2 c0, glm::vec2 c1, glm::vec2 p1, int steps,
+                                 std::vector<glm::vec2>& out);
 
         // Control anti-aliasing for renderers that support it
         virtual void setAntiAliasing(bool enable) = 0;
