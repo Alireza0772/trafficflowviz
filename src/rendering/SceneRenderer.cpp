@@ -132,6 +132,10 @@ namespace tfv
     {
         if(!net)
             return;
+        // Per-lane width in world units (== sim.lane_width_m default, which is also what
+        // makeTwoWay uses for the median). Keeping the renderer and the median math on the
+        // SAME lane width is what makes the two carriageways leave a clean median gap.
+        const float laneWpx = 3.5f;
         const auto& segs = net->segments();
         for(const auto& s : segs)
         {
@@ -142,19 +146,26 @@ namespace tfv
             if(len == 0)
                 continue;
             float nx = -dy / len, ny = dx / len;
-            float half = roadWidth * 0.5f;
+            // Ribbon width now tracks the lane count instead of a fixed 10 px. The old fixed
+            // width made every road equally wide AND, on a two-way road (median offset 3.5),
+            // overlapped the two 10-px carriageways straight through the median — which is why
+            // the divider looked wrong. lanes*laneWpx matches the makeTwoWay offset, so opposing
+            // ribbons now leave a median gap exactly medianWidth wide.
+            const RoadSegment* seg = net->getSegment(s.id);
+            const int lanes = seg ? std::max(1, seg->lanes) : 1;
+            const float half = lanes * laneWpx * 0.5f;
+            const bool twoway = (s.pairId != 0) || (s.medianOffset != 0.0f);
             auto toScreen = [&](float wx, float wy)
             {
                 return std::pair<int, int>{static_cast<int>(wx * m_scale) + m_panX,
                                            static_cast<int>(wy * m_scale) + m_panY};
             };
-            // Phase B: shift the ribbon to this direction's side of the median (0 = one-way,
-            // so cx==x and the geometry is unchanged).
+            // Shift the ribbon to this direction's side of the median (0 = one-way -> unchanged).
             const float cx1 = x1 + nx * s.medianOffset, cy1 = y1 + ny * s.medianOffset;
             const float cx2 = x2 + nx * s.medianOffset, cy2 = y2 + ny * s.medianOffset;
-            auto a1 = toScreen(cx1 + nx * half, cy1 + ny * half);
+            auto a1 = toScreen(cx1 + nx * half, cy1 + ny * half); // outer edge (+normal)
             auto a2 = toScreen(cx2 + nx * half, cy2 + ny * half);
-            auto b1 = toScreen(cx1 - nx * half, cy1 - ny * half);
+            auto b1 = toScreen(cx1 - nx * half, cy1 - ny * half); // median-facing edge (-normal)
             auto b2 = toScreen(cx2 - nx * half, cy2 - ny * half);
 
             // Asphalt ribbon (filled quad a1 -> a2 -> b2 -> b1).
@@ -164,15 +175,28 @@ namespace tfv
             };
             m_r->fillQuad(V(a1), V(a2), V(b2), V(b1));
 
-            // Solid lane-edge lines.
+            // Outer (shoulder) edge: solid white.
             m_r->setColor(m_pal.edge.r, m_pal.edge.g, m_pal.edge.b, 255);
             m_r->drawLine(a1.first, a1.second, a2.first, a2.second, 1);
-            m_r->drawLine(b1.first, b1.second, b2.first, b2.second, 1);
+            // Median-facing edge: a solid divider (center color) for a two-way road — this is
+            // the line against oncoming traffic — otherwise the ordinary white shoulder edge.
+            if(twoway)
+                m_r->setColor(m_pal.center.r, m_pal.center.g, m_pal.center.b, 255);
+            m_r->drawLine(b1.first, b1.second, b2.first, b2.second, twoway ? 2 : 1);
 
-            // Dashed centerline ALONG the road (the old code dashed across it).
-            auto cs = toScreen(cx1, cy1), ce = toScreen(cx2, cy2);
-            m_r->setColor(m_pal.center.r, m_pal.center.g, m_pal.center.b, 200);
-            drawDashedLine(cs.first, cs.second, ce.first, ce.second);
+            // Dashed lane dividers BETWEEN lanes (none on a single-lane carriageway). Offsets are
+            // measured inward from the outer edge so they sit on the true lane boundaries.
+            if(lanes > 1)
+            {
+                m_r->setColor(m_pal.center.r, m_pal.center.g, m_pal.center.b, 180);
+                for(int k = 1; k < lanes; ++k)
+                {
+                    const float off = half - k * laneWpx;
+                    auto d1 = toScreen(cx1 + nx * off, cy1 + ny * off);
+                    auto d2 = toScreen(cx2 + nx * off, cy2 + ny * off);
+                    drawDashedLine(d1.first, d1.second, d2.first, d2.second);
+                }
+            }
         }
     }
 
