@@ -830,9 +830,34 @@ namespace tfv
         for(const auto& [fid, cls] : twoWay)
             makeTwoWay(fid, laneWidth, classSpec(cls).medianWidth);
 
+        classifyJunctions(seed); // tag 3-way / 4-way / roundabout from node degree
+
         LOG_INFO("generated tensor-field city: {n} directed segments, {nd} junctions",
                  PARAM(n, m_segments.size()), PARAM(nd, posOf.size()));
         return m_segments.size();
+    }
+
+    void RoadNetwork::classifyJunctions(uint64_t seed)
+    {
+        std::mt19937_64 rng(seed ^ 0x5DEECE66DULL);
+        std::uniform_real_distribution<float> u(0.0f, 1.0f);
+        for(uint32_t id : getNodeIds()) // sorted -> deterministic draw order
+        {
+            Node* n = getNode(id);
+            if(!n)
+                continue;
+            // Incident road count. In a two-way network each road is one incoming + one outgoing,
+            // so this is the number of streets meeting here.
+            const int deg = static_cast<int>(std::max(n->incoming.size(), n->outgoing.size()));
+            if(deg >= 5)
+                n->junction = (u(rng) < 0.85f) ? JunctionStyle::ROUNDABOUT : JunctionStyle::FOUR_WAY;
+            else if(deg == 4)
+                n->junction = (u(rng) < 0.15f) ? JunctionStyle::ROUNDABOUT : JunctionStyle::FOUR_WAY;
+            else if(deg == 3)
+                n->junction = (u(rng) < 0.05f) ? JunctionStyle::ROUNDABOUT : JunctionStyle::THREE_WAY;
+            else
+                n->junction = JunctionStyle::PLAIN; // <=2 roads: through-point or dead-end
+        }
     }
 
     void RoadNetwork::addNode(const Node& node)
@@ -864,6 +889,8 @@ namespace tfv
         {
             if(static_cast<int>(node.incoming.size()) < minApproaches)
                 continue;
+            if(node.junction == JunctionStyle::ROUNDABOUT)
+                continue; // roundabouts yield, they don't signalize
             Intersection x;
             x.nodeId = nodeId;
             x.approaches = node.incoming;

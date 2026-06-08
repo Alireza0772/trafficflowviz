@@ -105,8 +105,9 @@ namespace tfv
         RGB8 backgroundColor() const { return themePalette(m_theme).bg; }
 
       private:
-        void drawSigns();  // draw traffic signs as small colored markers
-        void drawLights(); // draw traffic-light state per intersection approach
+        void drawJunctions(); // 3-way/4-way intersection pads + roundabout islands
+        void drawSigns();     // draw traffic signs as small colored markers
+        void drawLights();    // draw traffic-light state per intersection approach
 
         Renderer* m_r;
         const RoadNetwork* m_net{nullptr};

@@ -11,6 +11,7 @@ namespace tfv
     {
         RoadRenderer roadR(m_r, m_panX, m_panY, m_scale, m_antiAliasing, themePalette(m_theme));
         roadR.draw(m_net);
+        drawJunctions(); // 3-way / 4-way pads + roundabout islands, on top of the road ribbons
         VehicleRenderer vehR(m_r, m_panX, m_panY, m_scale, m_antiAliasing, m_encoding);
         vehR.draw(vehicles, m_net);
 
@@ -67,6 +68,79 @@ namespace tfv
                 lampAt(0, 235, 45, 45, cur == LightColor::Red);
                 lampAt(1, 240, 200, 45, cur == LightColor::Amber);
                 lampAt(2, 45, 220, 45, cur == LightColor::Green);
+            }
+        }
+    }
+
+    void SceneRenderer::drawJunctions()
+    {
+        if(!m_net)
+            return;
+        const ThemePalette pal = themePalette(m_theme);
+        const float laneWpx = 3.5f;
+        auto brighten = [](RGB8 c, float f) {
+            auto cl = [](float v) {
+                return static_cast<uint8_t>(std::max(0.0f, std::min(255.0f, v)));
+            };
+            return RGB8{cl(c.r * f), cl(c.g * f), cl(c.b * f)};
+        };
+        // Filled disc (triangle fan) + circle outline, both in framebuffer pixels.
+        auto disc = [&](float cx, float cy, float rad, RGB8 col) {
+            if(rad < 1.0f)
+                rad = 1.0f;
+            const int SEG = 22;
+            RVertex v[SEG + 1];
+            v[0] = RVertex{cx, cy, col.r, col.g, col.b, 255};
+            for(int i = 0; i < SEG; ++i)
+            {
+                const float a = 6.2831853f * static_cast<float>(i) / SEG;
+                v[i + 1] = RVertex{cx + std::cos(a) * rad, cy + std::sin(a) * rad,
+                                   col.r, col.g, col.b, 255};
+            }
+            int idx[SEG * 3];
+            for(int i = 0; i < SEG; ++i)
+            {
+                idx[i * 3 + 0] = 0;
+                idx[i * 3 + 1] = i + 1;
+                idx[i * 3 + 2] = (i + 1) % SEG + 1;
+            }
+            m_r->fillGeometry(v, SEG + 1, idx, SEG * 3);
+        };
+        auto ring = [&](float cx, float cy, float rad, RGB8 col, int w) {
+            const int SEG = 26;
+            m_r->setColor(col.r, col.g, col.b, 255);
+            float px = cx + rad, py = cy;
+            for(int i = 1; i <= SEG; ++i)
+            {
+                const float a = 6.2831853f * static_cast<float>(i) / SEG;
+                const float x = cx + std::cos(a) * rad, y = cy + std::sin(a) * rad;
+                m_r->drawLine(static_cast<int>(px), static_cast<int>(py), static_cast<int>(x),
+                              static_cast<int>(y), w);
+                px = x;
+                py = y;
+            }
+        };
+        const RGB8 pad = brighten(pal.asphalt, 1.35f);
+        for(uint32_t id : m_net->getNodeIds())
+        {
+            const Node* n = m_net->getNode(id);
+            if(!n || n->junction == JunctionStyle::PLAIN)
+                continue;
+            const int deg = static_cast<int>(std::max(n->incoming.size(), n->outgoing.size()));
+            const float cx = n->pos.x * m_scale + static_cast<float>(m_panX);
+            const float cy = n->pos.y * m_scale + static_cast<float>(m_panY);
+            if(n->junction == JunctionStyle::ROUNDABOUT)
+            {
+                const float rad = std::max(7.0f, std::min(30.0f, deg * 3.2f)) * m_scale;
+                disc(cx, cy, rad, pal.asphalt);                              // paved annulus base
+                ring(cx, cy, rad, pal.center, std::max(1, static_cast<int>(m_scale))); // lane edge
+                disc(cx, cy, rad * 0.45f, RGB8{58, 102, 66});                  // green center island
+            }
+            else
+            {
+                // 3-/4-way intersection pad: a lighter-asphalt disc; 4-way larger than 3-way.
+                const float k = (n->junction == JunctionStyle::FOUR_WAY) ? 2.4f : 1.9f;
+                disc(cx, cy, k * laneWpx * m_scale, pad);
             }
         }
     }

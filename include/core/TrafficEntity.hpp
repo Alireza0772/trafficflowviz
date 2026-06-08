@@ -191,6 +191,17 @@ namespace tfv
     };
 
     // Node in the road network (intersection)
+    // How a node is drawn (and whether it signalizes). Classified from node degree at
+    // generation: >4 incident roads favour a ROUNDABOUT, <=4 favour a junction (3-/4-way);
+    // PLAIN = a through-point / dead-end. Default PLAIN keeps hand-authored/CSV nodes unstyled.
+    enum class JunctionStyle : uint8_t
+    {
+        PLAIN = 0,
+        THREE_WAY,
+        FOUR_WAY,
+        ROUNDABOUT
+    };
+
     struct Node
     {
         uint32_t id;                    // Unique identifier
@@ -198,6 +209,7 @@ namespace tfv
         std::vector<uint32_t> incoming; // Incoming segment IDs
         std::vector<uint32_t> outgoing; // Outgoing segment IDs
         uint32_t intersectionId{0};     // owning intersection (Phase 4; unused now)
+        JunctionStyle junction{JunctionStyle::PLAIN}; // render style (procedural; not hashed)
     };
 
     // Statistics for a road segment

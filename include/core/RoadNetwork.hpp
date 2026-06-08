@@ -86,6 +86,11 @@ namespace tfv
         std::size_t generateCity(int rows, int cols, float spacing, float jitter, uint64_t seed,
                                  float laneWidth);
 
+        /** Tag each node with a JunctionStyle from its degree (number of incident roads): a node
+         *  with >4 roads is likely a ROUNDABOUT, 3 or 4 roads a 3-/4-way junction, fewer = PLAIN.
+         *  Roundabout-vs-junction near the 3/4 boundary is a seeded coin flip. Deterministic. */
+        void classifyJunctions(uint64_t seed);
+
         /** Add a new segment to the network */
         void addSegment(const RoadSegment& segment);
 
