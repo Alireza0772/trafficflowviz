@@ -296,37 +296,15 @@ namespace tfv
         const auto& segs = net->segments();
         for(const auto& s : segs)
         {
-            float x1 = static_cast<float>(s.x1), y1 = static_cast<float>(s.y1);
-            float x2 = static_cast<float>(s.x2), y2 = static_cast<float>(s.y2);
-            float dx = x2 - x1, dy = y2 - y1;
-            float len = std::sqrt(dx * dx + dy * dy);
-            if(len == 0)
-                continue;
-            float nx = -dy / len, ny = dx / len;
-            // Ribbon width now tracks the lane count instead of a fixed 10 px. The old fixed
-            // width made every road equally wide AND, on a two-way road (median offset 3.5),
-            // overlapped the two 10-px carriageways straight through the median — which is why
-            // the divider looked wrong. lanes*laneWpx matches the makeTwoWay offset, so opposing
-            // ribbons now leave a median gap exactly medianWidth wide.
             const RoadSegment* seg = net->getSegment(s.id);
             const int lanes = seg ? std::max(1, seg->lanes) : 1;
             const float half = lanes * laneWpx * 0.5f;
+            const float medianOffset = s.medianOffset;
             const bool twoway = (s.pairId != 0) || (s.medianOffset != 0.0f);
-            auto toScreen = [&](float wx, float wy)
-            {
+            auto toScreen = [&](float wx, float wy) {
                 return std::pair<int, int>{static_cast<int>(wx * m_scale) + m_panX,
                                            static_cast<int>(wy * m_scale) + m_panY};
             };
-            // Shift the ribbon to this direction's side of the median (0 = one-way -> unchanged).
-            const float cx1 = x1 + nx * s.medianOffset, cy1 = y1 + ny * s.medianOffset;
-            const float cx2 = x2 + nx * s.medianOffset, cy2 = y2 + ny * s.medianOffset;
-            auto a1 = toScreen(cx1 + nx * half, cy1 + ny * half); // outer edge (+normal)
-            auto a2 = toScreen(cx2 + nx * half, cy2 + ny * half);
-            auto b1 = toScreen(cx1 - nx * half, cy1 - ny * half); // median-facing edge (-normal)
-            auto b2 = toScreen(cx2 - nx * half, cy2 - ny * half);
-
-            // Asphalt ribbon (filled quad a1 -> a2 -> b2 -> b1), tinted by road class so the
-            // generated hierarchy reads at a glance (brighter asphalt = higher class).
             auto shade = [](RGB8 base, float f) -> RGB8 {
                 auto cl = [](float v) {
                     return static_cast<uint8_t>(std::max(0.0f, std::min(255.0f, v)));
@@ -342,33 +320,53 @@ namespace tfv
             case RoadClass::LOCAL:     asphalt = shade(m_pal.asphalt, 0.90f); break;
             default:                   break; // NONE (CSV/hand-authored): base asphalt
             }
-            auto V = [&](std::pair<int, int> p) {
-                return RVertex{static_cast<float>(p.first), static_cast<float>(p.second),
-                               asphalt.r, asphalt.g, asphalt.b, 255};
-            };
-            m_r->fillQuad(V(a1), V(a2), V(b2), V(b1));
-
-            // Outer (shoulder) edge: solid white.
-            m_r->setColor(m_pal.edge.r, m_pal.edge.g, m_pal.edge.b, 255);
-            m_r->drawLine(a1.first, a1.second, a2.first, a2.second, 1);
-            // Median-facing edge: a solid divider (center color) for a two-way road — this is
-            // the line against oncoming traffic — otherwise the ordinary white shoulder edge.
-            if(twoway)
-                m_r->setColor(m_pal.center.r, m_pal.center.g, m_pal.center.b, 255);
-            m_r->drawLine(b1.first, b1.second, b2.first, b2.second, twoway ? 2 : 1);
-
-            // Dashed lane dividers BETWEEN lanes (none on a single-lane carriageway). Offsets are
-            // measured inward from the outer edge so they sit on the true lane boundaries.
-            if(lanes > 1)
-            {
-                m_r->setColor(m_pal.center.r, m_pal.center.g, m_pal.center.b, 180);
-                for(int k = 1; k < lanes; ++k)
+            // Draw one straight ribbon span between two world points. A curved road is just a
+            // chain of these along its centerline; a straight road is a single span computed
+            // exactly as before, so straight rendering is byte-identical.
+            auto drawSpan = [&](float wx1, float wy1, float wx2, float wy2) {
+                const float dx = wx2 - wx1, dy = wy2 - wy1;
+                const float len = std::sqrt(dx * dx + dy * dy);
+                if(len < 1e-4f)
+                    return;
+                const float nx = -dy / len, ny = dx / len;
+                const float cx1 = wx1 + nx * medianOffset, cy1 = wy1 + ny * medianOffset;
+                const float cx2 = wx2 + nx * medianOffset, cy2 = wy2 + ny * medianOffset;
+                const auto a1 = toScreen(cx1 + nx * half, cy1 + ny * half);
+                const auto a2 = toScreen(cx2 + nx * half, cy2 + ny * half);
+                const auto b1 = toScreen(cx1 - nx * half, cy1 - ny * half);
+                const auto b2 = toScreen(cx2 - nx * half, cy2 - ny * half);
+                auto V = [&](std::pair<int, int> p) {
+                    return RVertex{static_cast<float>(p.first), static_cast<float>(p.second),
+                                   asphalt.r, asphalt.g, asphalt.b, 255};
+                };
+                m_r->fillQuad(V(a1), V(a2), V(b2), V(b1));
+                m_r->setColor(m_pal.edge.r, m_pal.edge.g, m_pal.edge.b, 255);
+                m_r->drawLine(a1.first, a1.second, a2.first, a2.second, 1);
+                if(twoway)
+                    m_r->setColor(m_pal.center.r, m_pal.center.g, m_pal.center.b, 255);
+                m_r->drawLine(b1.first, b1.second, b2.first, b2.second, twoway ? 2 : 1);
+                if(lanes > 1)
                 {
-                    const float off = half - k * laneWpx;
-                    auto d1 = toScreen(cx1 + nx * off, cy1 + ny * off);
-                    auto d2 = toScreen(cx2 + nx * off, cy2 + ny * off);
-                    drawDashedLine(d1.first, d1.second, d2.first, d2.second);
+                    m_r->setColor(m_pal.center.r, m_pal.center.g, m_pal.center.b, 180);
+                    for(int k = 1; k < lanes; ++k)
+                    {
+                        const float off = half - k * laneWpx;
+                        const auto d1 = toScreen(cx1 + nx * off, cy1 + ny * off);
+                        const auto d2 = toScreen(cx2 + nx * off, cy2 + ny * off);
+                        drawDashedLine(d1.first, d1.second, d2.first, d2.second);
+                    }
                 }
+            };
+            if(seg && seg->centerline.size() >= 2)
+            {
+                const auto& cl = seg->centerline;
+                for(std::size_t k = 0; k + 1 < cl.size(); ++k)
+                    drawSpan(cl[k].x, cl[k].y, cl[k + 1].x, cl[k + 1].y);
+            }
+            else
+            {
+                drawSpan(static_cast<float>(s.x1), static_cast<float>(s.y1),
+                         static_cast<float>(s.x2), static_cast<float>(s.y2));
             }
         }
     }

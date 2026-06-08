@@ -151,13 +151,56 @@ namespace tfv
     // byte-identical and the pinned golden digests do not move.
     struct SegmentGeometry
     {
-        glm::vec2 dir{1.0f, 0.0f}; // unit travel direction
+        glm::vec2 dir{1.0f, 0.0f}; // unit chord/travel direction (straight path + fallback)
         float length{0.0f};        // arc length (meters)
+        // Optional tessellated centerline (absolute world points) + cumulative arc length per
+        // point. Present (>=2 pts) => a CURVE: offset/tangent/normal are interpolated along it.
+        // Null => the straight fast path, byte-identical to the pre-curve arithmetic (so the
+        // pinned digests cannot move for any straight/legacy segment).
+        const std::vector<glm::vec2>* pts{nullptr};
+        const std::vector<float>* cum{nullptr};
 
         // Offset from the segment origin (the fromNode position) at arc-length `s`.
-        glm::vec2 offsetAt(float s) const { return dir * s; }
-        glm::vec2 tangentAt(float /*s*/) const { return dir; }
-        glm::vec2 normalAt(float /*s*/) const { return glm::vec2(-dir.y, dir.x); }
+        glm::vec2 offsetAt(float s) const
+        {
+            if(!pts || pts->size() < 2)
+                return dir * s; // straight fast path (unchanged)
+            const std::size_t i = spanAt(s);
+            const float t = frac(i, s);
+            return (*pts)[i] + ((*pts)[i + 1] - (*pts)[i]) * t - (*pts)[0];
+        }
+        glm::vec2 tangentAt(float s) const
+        {
+            if(!pts || pts->size() < 2)
+                return dir;
+            const std::size_t i = spanAt(s);
+            const glm::vec2 d = (*pts)[i + 1] - (*pts)[i];
+            const float L = glm::length(d);
+            return (L > 1e-6f) ? d / L : dir;
+        }
+        glm::vec2 normalAt(float s) const
+        {
+            const glm::vec2 t = tangentAt(s);
+            return glm::vec2(-t.y, t.x);
+        }
+
+      private:
+        std::size_t spanAt(float s) const // index of the polyline span containing arc-length s
+        {
+            const std::size_t n = pts->size();
+            for(std::size_t i = 0; i + 2 < n; ++i)
+                if(s < (*cum)[i + 1])
+                    return i;
+            return n - 2;
+        }
+        float frac(std::size_t i, float s) const // 0..1 within span i
+        {
+            const float a = (*cum)[i], b = (*cum)[i + 1];
+            if(b <= a)
+                return 0.0f;
+            float t = (s - a) / (b - a);
+            return (t < 0.0f) ? 0.0f : (t > 1.0f ? 1.0f : t);
+        }
     };
 
     struct RoadSegment
@@ -186,8 +229,36 @@ namespace tfv
         float medianOffset{0.0f}; // lateral shift of this direction's centerline (meters)
         RoadClass roadClass{RoadClass::NONE}; // procedural class (NONE = hand-authored/CSV)
 
-        // Geometry seam (Phase A). Straight today; Phase E returns a stored curve geom.
-        SegmentGeometry geometry() const { return SegmentGeometry{dir, length}; }
+        // Curved centerline (Phase E). Empty => straight (the default; byte-identical fast path).
+        std::vector<glm::vec2> centerline; // tessellated absolute world points (>=2 => curve)
+        std::vector<float> arcLen;         // cumulative arc length at each centerline point
+
+        // Set the curved centerline: stores points, recomputes the cumulative arc length, and
+        // updates length (= total arc length) + dir (= chord direction). <2 points clears it.
+        void setCenterline(std::vector<glm::vec2> pts)
+        {
+            centerline = std::move(pts);
+            arcLen.assign(centerline.size(), 0.0f);
+            for(std::size_t i = 1; i < centerline.size(); ++i)
+                arcLen[i] = arcLen[i - 1] + glm::length(centerline[i] - centerline[i - 1]);
+            if(centerline.size() >= 2)
+            {
+                length = arcLen.back();
+                const glm::vec2 c = centerline.back() - centerline.front();
+                const float L = glm::length(c);
+                if(L > 1e-6f)
+                    dir = c / L;
+            }
+        }
+
+        // Geometry seam (Phase A). Straight by default; returns a curve geom when a centerline
+        // has been set (Phase E). Straight segments take the exact pre-curve path.
+        SegmentGeometry geometry() const
+        {
+            if(centerline.size() >= 2)
+                return SegmentGeometry{dir, length, &centerline, &arcLen};
+            return SegmentGeometry{dir, length};
+        }
     };
 
     // Node in the road network (intersection)

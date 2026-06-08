@@ -377,6 +377,7 @@ namespace tfv
         const float fSpeed = it->second.speedLimit;
         const glm::vec2 fDir = it->second.dir;
         const RoadClass fClass = it->second.roadClass;
+        const std::vector<glm::vec2> fCenter = it->second.centerline; // empty for straight roads
         const float halfMedian =
             0.5f * static_cast<float>(fLanes) * laneWidth + 0.5f * medianWidth;
 
@@ -419,6 +420,11 @@ namespace tfv
         rev.medianOffset = halfMedian;
         rev.pairId = forwardId;
         rev.roadClass = fClass; // the opposing carriageway shares the forward's class
+        if(fCenter.size() >= 2) // curved road: the reverse follows the same curve, reversed. Its
+        {                       // flipped tangent flips the normal, so +halfMedian lands opposite.
+            std::vector<glm::vec2> rc(fCenter.rbegin(), fCenter.rend());
+            rev.setCenterline(std::move(rc));
+        }
         m_segments[revId] = rev; // may rehash m_segments; do not touch `it` after this
         m_nodes[rev.fromNode].outgoing.push_back(revId);
         m_nodes[rev.toNode].incoming.push_back(revId);
@@ -794,9 +800,12 @@ namespace tfv
         uint32_t segId = 0;
         std::vector<std::pair<uint32_t, RoadClass>> twoWay;
         std::set<std::pair<uint32_t, uint32_t>> haveEdge;
-        auto build = [&](std::vector<std::vector<Cross>>& crossOf, RoadClass cls) {
-            for(auto& cr : crossOf)
+        auto build = [&](std::vector<std::vector<Cross>>& crossOf,
+                         const std::vector<std::vector<glm::vec2>>& lines, RoadClass cls) {
+            for(std::size_t li = 0; li < crossOf.size(); ++li)
             {
+                auto& cr = crossOf[li];
+                const std::vector<glm::vec2>& line = lines[li];
                 std::sort(cr.begin(), cr.end(),
                           [](const Cross& a, const Cross& b) { return a.pidx < b.pidx; });
                 for(std::size_t i = 0; i + 1 < cr.size(); ++i)
@@ -806,7 +815,18 @@ namespace tfv
                     const std::pair<uint32_t, uint32_t> e(std::min(a, b), std::max(a, b));
                     if(haveEdge.count(e)) continue;
                     const glm::vec2 pa = posOf[a], pb = posOf[b];
-                    const float len = glm::length(pb - pa);
+                    // Curved centerline = the streamline sub-polyline between the two crossings
+                    // (endpoints snapped to the node positions). This is what makes the road a
+                    // smooth curve following the field instead of a straight chord.
+                    std::vector<glm::vec2> cl;
+                    cl.push_back(pa);
+                    for(int k = cr[i].pidx + 1; k < cr[i + 1].pidx && k < static_cast<int>(line.size());
+                        ++k)
+                        cl.push_back(line[static_cast<std::size_t>(k)]);
+                    cl.push_back(pb);
+                    float len = 0.0f;
+                    for(std::size_t k = 1; k < cl.size(); ++k)
+                        len += glm::length(cl[k] - cl[k - 1]);
                     if(len < spacing * 0.2f) continue; // drop tiny stubs
                     haveEdge.insert(e);
                     const RoadClassSpec spec = classSpec(cls);
@@ -814,19 +834,22 @@ namespace tfv
                     s.id = segId;
                     s.fromNode = a;
                     s.toNode = b;
-                    s.dir = (pb - pa) / len;
+                    const float chord = glm::length(pb - pa);
+                    s.dir = (chord > 1e-3f) ? (pb - pa) / chord : glm::vec2(1.0f, 0.0f);
                     s.length = len;
                     s.lanes = spec.lanes;
                     s.speedLimit = spec.speed;
                     s.roadClass = cls;
+                    if(cl.size() > 2) // >2 points => actually curved; 2 => straight, leave empty
+                        s.setCenterline(cl);
                     addSegment(s);
                     twoWay.emplace_back(segId, cls);
                     ++segId;
                 }
             }
         };
-        build(majCross, RoadClass::ARTERIAL);
-        build(minCross, RoadClass::LOCAL);
+        build(majCross, majors, RoadClass::ARTERIAL);
+        build(minCross, minors, RoadClass::LOCAL);
         for(const auto& [fid, cls] : twoWay)
             makeTwoWay(fid, laneWidth, classSpec(cls).medianWidth);
 
