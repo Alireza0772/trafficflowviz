@@ -168,10 +168,26 @@ namespace tfv
             auto b1 = toScreen(cx1 - nx * half, cy1 - ny * half); // median-facing edge (-normal)
             auto b2 = toScreen(cx2 - nx * half, cy2 - ny * half);
 
-            // Asphalt ribbon (filled quad a1 -> a2 -> b2 -> b1).
+            // Asphalt ribbon (filled quad a1 -> a2 -> b2 -> b1), tinted by road class so the
+            // generated hierarchy reads at a glance (brighter asphalt = higher class).
+            auto shade = [](RGB8 base, float f) -> RGB8 {
+                auto cl = [](float v) {
+                    return static_cast<uint8_t>(std::max(0.0f, std::min(255.0f, v)));
+                };
+                return RGB8{cl(base.r * f), cl(base.g * f), cl(base.b * f)};
+            };
+            RGB8 asphalt = m_pal.asphalt;
+            switch(s.roadClass)
+            {
+            case RoadClass::HIGHWAY:   asphalt = shade(m_pal.asphalt, 1.55f); break;
+            case RoadClass::ARTERIAL:  asphalt = shade(m_pal.asphalt, 1.30f); break;
+            case RoadClass::COLLECTOR: asphalt = shade(m_pal.asphalt, 1.10f); break;
+            case RoadClass::LOCAL:     asphalt = shade(m_pal.asphalt, 0.90f); break;
+            default:                   break; // NONE (CSV/hand-authored): base asphalt
+            }
             auto V = [&](std::pair<int, int> p) {
                 return RVertex{static_cast<float>(p.first), static_cast<float>(p.second),
-                               m_pal.asphalt.r, m_pal.asphalt.g, m_pal.asphalt.b, 255};
+                               asphalt.r, asphalt.g, asphalt.b, 255};
             };
             m_r->fillQuad(V(a1), V(a2), V(b2), V(b1));
 

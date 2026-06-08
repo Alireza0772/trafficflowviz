@@ -243,6 +243,27 @@ namespace tfv
         if(!init())
             return;
 
+        // Screenshot mode: if app.screenshot_path is set, render a few warm-up frames (so the
+        // view is framed and vehicles are placed), dump one PNG, and exit — no interactive loop.
+        // Lets the generated scene be captured headlessly for visual checks / docs.
+        {
+            const std::string shotPath = TFV_CONFIG().getString("app.screenshot_path", "");
+            if(!shotPath.empty())
+            {
+                const int warmup = std::max(1, TFV_CONFIG().getInt("app.screenshot_ticks", 30));
+                for(int i = 0; i < warmup; ++i)
+                {
+                    handleEvents();
+                    update(m_fixedDt);
+                    render();
+                }
+                const bool ok = exportImage(shotPath);
+                LOG_INFO("[screenshot] wrote {p} (ok={ok})", PARAM(p, shotPath),
+                         PARAM(ok, ok ? 1 : 0));
+                return;
+            }
+        }
+
         using clk = std::chrono::high_resolution_clock;
         auto last = clk::now();
         m_running = true;

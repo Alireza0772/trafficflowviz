@@ -18,6 +18,7 @@ namespace tfv
         float length;             // pre‑computed pixel length
         float medianOffset{0.0f}; // Phase B: lateral shift for two-way ribbon rendering
         uint32_t pairId{0};       // opposing reverse segment id (0 = one-way)
+        RoadClass roadClass{RoadClass::NONE}; // procedural class -> render color (NONE = default)
     };
 
     /**
@@ -73,6 +74,17 @@ namespace tfv
         std::size_t generatePerturbedGrid(int rows, int cols, float spacing, float jitter,
                                           float keepProb, uint64_t seed, bool twoWay,
                                           float laneWidth, float medianWidth, int lanesPerDir);
+
+        /** Procedurally grow an "organic" city on an RxC lattice via hierarchical road agents
+         *  (HIGHWAY -> ARTERIAL -> COLLECTOR -> LOCAL), 8-connected so roads run orthogonally
+         *  AND diagonally. Each agent does a biased random walk: it usually continues straight,
+         *  sometimes turns, and terminates with a probability that RISES with the road's length
+         *  (so long runs end and spawn junctions). Each class carries its own lane count, speed
+         *  limit and median; every road is a divided two-way (an opposing one-way pair) via
+         *  makeTwoWay. Junctions emerge wherever roads meet. Connectivity is guaranteed (stray
+         *  components are linked). Fully deterministic for `seed`. Returns directed-segment count. */
+        std::size_t generateCity(int rows, int cols, float spacing, float jitter, uint64_t seed,
+                                 float laneWidth);
 
         /** Add a new segment to the network */
         void addSegment(const RoadSegment& segment);

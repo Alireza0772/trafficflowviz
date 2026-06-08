@@ -42,6 +42,19 @@ namespace tfv
         return static_cast<uint8_t>(1u << static_cast<uint8_t>(t));
     }
 
+    // Road class for the procedural city generator. Drives lane count, speed limit, median
+    // width and render color, giving the generated network a legible hierarchy. NONE is the
+    // default for hand-authored / CSV roads (unclassified). Ordered by capacity ascending so
+    // a "max class wins" merge during generation is a simple integer compare.
+    enum class RoadClass : uint8_t
+    {
+        LOCAL = 0,
+        COLLECTOR,
+        ARTERIAL,
+        HIGHWAY,
+        NONE = 255
+    };
+
     // A permitted (inSeg -> outSeg) turn at a node. If a node has NO Movement entries, every
     // movement is permitted (the no-op-when-absent default that keeps existing nets frozen).
     struct Movement
@@ -171,6 +184,7 @@ namespace tfv
         bool oneway{true};
         uint32_t pairId{0};       // opposing reverse segment id (0 = none)
         float medianOffset{0.0f}; // lateral shift of this direction's centerline (meters)
+        RoadClass roadClass{RoadClass::NONE}; // procedural class (NONE = hand-authored/CSV)
 
         // Geometry seam (Phase A). Straight today; Phase E returns a stored curve geom.
         SegmentGeometry geometry() const { return SegmentGeometry{dir, length}; }

@@ -36,14 +36,28 @@ namespace tfv
             {
                 m_roadNetwork = new RoadNetwork();
                 const uint64_t seed = cfg.getMasterSeed();
-                m_roadNetwork->generatePerturbedGrid(
-                    cfg.getInt("sim.proc.rows", 6), cfg.getInt("sim.proc.cols", 8),
-                    cfg.getFloat("sim.proc.spacing_m", 160.0f),
-                    cfg.getFloat("sim.proc.jitter_m", 40.0f),
-                    cfg.getFloat("sim.proc.keep_prob", 0.8f), seed,
-                    cfg.getInt("sim.proc.two_way", 1) != 0,
-                    cfg.getFloat("sim.lane_width_m", 3.5f),
-                    cfg.getFloat("sim.median_width_m", 3.5f), cfg.getInt("sim.proc.lanes", 1));
+                const std::string mode = cfg.getString("sim.proc.mode", "city");
+                if(mode == "grid")
+                {
+                    // Legacy uniform two-way grid.
+                    m_roadNetwork->generatePerturbedGrid(
+                        cfg.getInt("sim.proc.rows", 6), cfg.getInt("sim.proc.cols", 8),
+                        cfg.getFloat("sim.proc.spacing_m", 160.0f),
+                        cfg.getFloat("sim.proc.jitter_m", 40.0f),
+                        cfg.getFloat("sim.proc.keep_prob", 0.8f), seed,
+                        cfg.getInt("sim.proc.two_way", 1) != 0,
+                        cfg.getFloat("sim.lane_width_m", 3.5f),
+                        cfg.getFloat("sim.median_width_m", 3.5f), cfg.getInt("sim.proc.lanes", 1));
+                }
+                else
+                {
+                    // Default: organic city — hierarchical road classes grown probabilistically.
+                    m_roadNetwork->generateCity(
+                        cfg.getInt("sim.proc.rows", 7), cfg.getInt("sim.proc.cols", 11),
+                        cfg.getFloat("sim.proc.spacing_m", 160.0f),
+                        cfg.getFloat("sim.proc.jitter_m", 40.0f), seed,
+                        cfg.getFloat("sim.lane_width_m", 3.5f));
+                }
                 auto vehicles = spawnVehiclesProcedural(cfg.getInt("sim.proc.vehicles", 60), seed);
                 if(vehicles.empty())
                 {

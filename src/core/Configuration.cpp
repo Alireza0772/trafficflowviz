@@ -116,19 +116,28 @@ namespace tfv
         // Procedural world generation (default ON). Set sim.procedural=0 to load the CSVs
         // (data.city_file + data.vehicles_file) instead. Fully deterministic for the seed above.
         m_values["sim.procedural"] = "1";
-        m_values["sim.proc.rows"] = "6";        // grid rows (intersections)
-        m_values["sim.proc.cols"] = "8";        // grid cols
+        m_values["sim.proc.mode"] = "city";     // "city" = tensor-field organic, "grid"/"wfc" = others
+        m_values["sim.proc.rows"] = "7";        // domain height in blocks
+        m_values["sim.proc.cols"] = "11";       // domain width in blocks
         m_values["sim.proc.spacing_m"] = "160"; // block size (px == m here)
-        m_values["sim.proc.jitter_m"] = "40";   // per-node position jitter
-        m_values["sim.proc.keep_prob"] = "0.8"; // chance a redundant grid edge survives
-        m_values["sim.proc.two_way"] = "1";     // expand each street into a two-way road
-        m_values["sim.proc.lanes"] = "1";       // lanes per direction
         m_values["sim.proc.vehicles"] = "60";   // number of vehicles to spawn
+        // City (tensor-field) knobs:
+        m_values["sim.proc.districts"] = "3";          // grid orientation zones (street grain)
+        m_values["sim.proc.hubs"] = "3";               // canonical traffic centers (roundabout sites)
+        m_values["sim.proc.arterial_spacing_m"] = "320"; // spacing between major (arterial) roads
+        m_values["sim.proc.street_spacing_m"] = "160";   // spacing between minor (local) streets
+        // Grid-mode-only knobs:
+        m_values["sim.proc.jitter_m"] = "40";   // grid: per-node position jitter
+        m_values["sim.proc.keep_prob"] = "0.8"; // grid: chance a redundant edge survives
+        m_values["sim.proc.two_way"] = "1";     // grid: expand each street into a two-way road
+        m_values["sim.proc.lanes"] = "1";       // grid: lanes per direction
 
         // Agent decision layer (Phase 2)
         m_values["sim.default_brain"] = "rule";
         m_values["perf.decision_hz"] = "10.0";
-        m_values["sim.idm.v0_cap"] = "13.9";
+        m_values["sim.idm.v0_cap"] = "33.0"; // global desired-speed ceiling; per-road speed
+                                             // limits (e.g. 30 on highways, 11 on locals) bind
+                                             // below it, so the road-class hierarchy is visible
         m_values["sim.idm.a_max"] = "1.5";
         m_values["sim.idm.b_comfort"] = "2.0";
         m_values["sim.idm.b_max"] = "6.0";
@@ -149,6 +158,11 @@ namespace tfv
         m_values["data.city_file"] = "roads/roads_complex.csv";
         m_values["data.signs_file"] = "roads/signs.csv";
         m_values["data.icon_file"] = "icon.png";
+
+        // Headless screenshot: if app.screenshot_path is non-empty, the app renders
+        // app.screenshot_ticks warm-up frames, writes one PNG to that path, and exits.
+        m_values["app.screenshot_path"] = "";
+        m_values["app.screenshot_ticks"] = "30";
         
         // Networking
         m_values["network.websocket_url"] = "ws://localhost:8080";

@@ -11,9 +11,11 @@
 #include <glm/glm.hpp>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <numeric>
 #include <queue>
 #include <random>
+#include <set>
 #include <sstream>
 #include <unordered_set>
 
@@ -355,6 +357,7 @@ namespace tfv
             vis.x2 = static_cast<int>(toNodeConst->pos.x);
             vis.y2 = static_cast<int>(toNodeConst->pos.y);
             vis.length = segment.length;
+            vis.roadClass = segment.roadClass;
 
             m_seg.push_back(vis);
         }
@@ -373,6 +376,7 @@ namespace tfv
         const int fLanes = std::max(1, it->second.lanes);
         const float fSpeed = it->second.speedLimit;
         const glm::vec2 fDir = it->second.dir;
+        const RoadClass fClass = it->second.roadClass;
         const float halfMedian =
             0.5f * static_cast<float>(fLanes) * laneWidth + 0.5f * medianWidth;
 
@@ -414,6 +418,7 @@ namespace tfv
         // side of the road from the forward direction.
         rev.medianOffset = halfMedian;
         rev.pairId = forwardId;
+        rev.roadClass = fClass; // the opposing carriageway shares the forward's class
         m_segments[revId] = rev; // may rehash m_segments; do not touch `it` after this
         m_nodes[rev.fromNode].outgoing.push_back(revId);
         m_nodes[rev.toNode].incoming.push_back(revId);
@@ -434,6 +439,7 @@ namespace tfv
         rv.length = fLen;
         rv.medianOffset = halfMedian; // reverse visual's normal is flipped -> opposite side
         rv.pairId = forwardId;
+        rv.roadClass = fClass;
         m_seg.push_back(rv);
         for(auto& vis : m_seg)
             if(vis.id == forwardId)
@@ -541,6 +547,291 @@ namespace tfv
 
         LOG_INFO("generated {count} directed segments on a {r}x{c} perturbed grid",
                  PARAM(count, m_segments.size()), PARAM(r, rows), PARAM(c, cols));
+        return m_segments.size();
+    }
+
+    namespace
+    {
+        // Per-class lane count / speed limit / median width. Local & collector streets are
+        // undivided (median 0 -> opposing carriageways touch at a double-yellow centerline);
+        // arterials and highways get a real median gap. Used by generateCity.
+        struct RoadClassSpec
+        {
+            int lanes;
+            float speed;
+            float medianWidth;
+        };
+        RoadClassSpec classSpec(RoadClass c)
+        {
+            switch(c)
+            {
+            case RoadClass::HIGHWAY:   return {3, 30.0f, 6.0f};
+            case RoadClass::ARTERIAL:  return {2, 19.0f, 2.0f};
+            case RoadClass::COLLECTOR: return {1, 14.0f, 0.0f};
+            case RoadClass::LOCAL:     return {1, 11.0f, 0.0f};
+            default:                   return {1, 13.9f, 0.0f};
+            }
+        }
+    } // namespace
+
+    std::size_t RoadNetwork::generateCity(int rows, int cols, float spacing, float jitter,
+                                          uint64_t seed, float laneWidth)
+    {
+        clear();
+        if(rows < 2 || cols < 2)
+            return 0;
+        (void)jitter; // tensor-field roads follow the field; NO random jitter is applied
+
+        std::mt19937_64 rng(seed);
+        std::uniform_real_distribution<float> uni(0.0f, 1.0f);
+        const float W = static_cast<float>(cols) * spacing;
+        const float H = static_cast<float>(rows) * spacing;
+        const float margin = spacing;
+
+        // ---- Tensor field: a blend of grid + radial basis fields (Chen et al. 2008) ----
+        // Each basis contributes a symmetric tensor encoded as (A,B) = w*(cos2t, sin2t). The
+        // major eigenvector (the road heading) is at angle 0.5*atan2(B,A); the minor (cross
+        // street) is 90 degrees off. Bases are RBF-weighted so different districts have different
+        // street orientations, smoothly blended -> organic curves, and there is no jitter.
+        struct Basis { int type; glm::vec2 c; float theta; float decay; };
+        std::vector<Basis> bases;
+        // Tunable knobs (config file / CLI / UI all drive these; see Configuration defaults).
+        auto& cfg = TFV_CONFIG();
+        const int nGrid = std::max(1, cfg.getInt("sim.proc.districts", 3)); // grid orientation zones
+        const float invArea = 1.0f / (W * H);
+        for(int i = 0; i < nGrid; ++i)
+        {
+            Basis b;
+            b.type = 0;
+            b.c = {margin + uni(rng) * W, margin + uni(rng) * H};
+            b.theta = uni(rng) * 3.14159265f;
+            b.decay = (i == 0) ? 0.0f : (1.2f + 1.8f * uni(rng)) * invArea; // first basis = global
+            bases.push_back(b);
+        }
+        // Several spread-out radial hubs, NOT one. Each is a local "canonical point" that gathers
+        // only its own district's traffic; a minimum separation distributes them across the map and
+        // a tight decay keeps each one local, so the network has multiple centers instead of every
+        // road funnelling into a single unnatural sink.
+        const int nHubs = std::max(0, cfg.getInt("sim.proc.hubs", 3)); // canonical traffic centers
+        const float hubSep = 0.30f * std::min(W, H);
+        std::vector<glm::vec2> hubC;
+        for(int tries = 0; tries < nHubs * 8 && static_cast<int>(hubC.size()) < nHubs; ++tries)
+        {
+            const glm::vec2 c{margin + (0.15f + 0.70f * uni(rng)) * W,
+                              margin + (0.15f + 0.70f * uni(rng)) * H};
+            bool ok = true;
+            for(const glm::vec2& q : hubC)
+                if(glm::length(c - q) < hubSep) { ok = false; break; }
+            if(!ok) continue;
+            hubC.push_back(c);
+            Basis b;
+            b.type = 1;
+            b.c = c;
+            b.decay = (9.0f + 5.0f * uni(rng)) * invArea; // tight -> a LOCAL hub, not a global sink
+            b.theta = 0.0f;
+            bases.push_back(b);
+        }
+
+        auto fieldAB = [&](glm::vec2 p) -> glm::vec2 {
+            float A = 0.0f, B = 0.0f;
+            for(const Basis& b : bases)
+            {
+                const glm::vec2 v = p - b.c;
+                const float r2 = v.x * v.x + v.y * v.y;
+                const float w = (b.decay <= 0.0f) ? 1.0f : std::exp(-b.decay * r2);
+                if(b.type == 0)
+                {
+                    A += w * std::cos(2.0f * b.theta);
+                    B += w * std::sin(2.0f * b.theta);
+                }
+                else if(r2 > 1e-3f)
+                {
+                    A += w * (v.x * v.x - v.y * v.y) / r2;
+                    B += w * (2.0f * v.x * v.y) / r2;
+                }
+            }
+            return {A, B};
+        };
+        // Unit road direction at p (major eigenvector, or its 90-degree minor); {0,0} at a field
+        // singularity so the tracer knows to stop.
+        auto dirAt = [&](glm::vec2 p, bool major) -> glm::vec2 {
+            const glm::vec2 ab = fieldAB(p);
+            if(ab.x * ab.x + ab.y * ab.y < 1e-9f)
+                return {0.0f, 0.0f};
+            float th = 0.5f * std::atan2(ab.y, ab.x);
+            if(!major)
+                th += 1.5707963f;
+            return {std::cos(th), std::sin(th)};
+        };
+        auto inDom = [&](glm::vec2 p) {
+            return p.x >= 0.0f && p.x <= 2.0f * margin + W && p.y >= 0.0f && p.y <= 2.0f * margin + H;
+        };
+
+        // ---- Trace a streamline from a seed (RK4, both directions) ----
+        // Eigenvectors are sign-ambiguous, so each step takes the sign continuous with the
+        // previous heading (dot > 0). Stops at the domain edge, a singularity, or the step cap.
+        const float ds = spacing * 0.25f;
+        const int maxSteps = static_cast<int>((W + H) / ds) + 8;
+        auto signedDir = [&](glm::vec2 p, bool major, glm::vec2 prev) -> glm::vec2 {
+            glm::vec2 d = dirAt(p, major);
+            if(d.x == 0.0f && d.y == 0.0f)
+                return d;
+            if(d.x * prev.x + d.y * prev.y < 0.0f)
+                d = -d;
+            return d;
+        };
+        auto traceHalf = [&](glm::vec2 seed, bool major, glm::vec2 dir0, std::vector<glm::vec2>& out) {
+            glm::vec2 p = seed, prev = dir0;
+            for(int s = 0; s < maxSteps; ++s)
+            {
+                glm::vec2 k1 = signedDir(p, major, prev);
+                if(k1.x == 0.0f && k1.y == 0.0f) break;
+                glm::vec2 k2 = signedDir(p + k1 * (ds * 0.5f), major, k1);
+                if(k2.x == 0.0f && k2.y == 0.0f) k2 = k1;
+                glm::vec2 k3 = signedDir(p + k2 * (ds * 0.5f), major, k2);
+                if(k3.x == 0.0f && k3.y == 0.0f) k3 = k2;
+                glm::vec2 k4 = signedDir(p + k3 * ds, major, k3);
+                if(k4.x == 0.0f && k4.y == 0.0f) k4 = k3;
+                glm::vec2 step = (k1 + k2 * 2.0f + k3 * 2.0f + k4) * (ds / 6.0f);
+                const float sl = std::sqrt(step.x * step.x + step.y * step.y);
+                if(sl < 1e-4f) break;
+                p = p + step;
+                prev = step / sl;
+                if(!inDom(p)) break;
+                out.push_back(p);
+            }
+        };
+        auto trace = [&](glm::vec2 seed, bool major) -> std::vector<glm::vec2> {
+            const glm::vec2 d0 = dirAt(seed, major);
+            std::vector<glm::vec2> fwd, bwd, line;
+            if(d0.x != 0.0f || d0.y != 0.0f)
+            {
+                traceHalf(seed, major, d0, fwd);
+                traceHalf(seed, major, glm::vec2(-d0.x, -d0.y), bwd);
+            }
+            for(auto it = bwd.rbegin(); it != bwd.rend(); ++it) line.push_back(*it);
+            line.push_back(seed);
+            for(const glm::vec2& q : fwd) line.push_back(q);
+            return line;
+        };
+
+        // ---- Seed streamlines on a coarse grid, skipping seeds too near an existing line so the
+        //      spacing (block size) stays even. Majors first (arterials), then minors (local). ----
+        std::vector<std::vector<glm::vec2>> majors, minors;
+        auto farFrom = [&](glm::vec2 p, const std::vector<std::vector<glm::vec2>>& lines, float sep) {
+            const float s2 = sep * sep;
+            for(const auto& ln : lines)
+                for(const glm::vec2& q : ln)
+                {
+                    const glm::vec2 d = p - q;
+                    if(d.x * d.x + d.y * d.y < s2) return false;
+                }
+            return true;
+        };
+        auto seedSet = [&](bool major, float sep, std::vector<std::vector<glm::vec2>>& out) {
+            for(float y = margin; y <= margin + H + 1.0f; y += sep)
+                for(float x = margin; x <= margin + W + 1.0f; x += sep)
+                {
+                    const glm::vec2 sp{x, y};
+                    if(!farFrom(sp, out, sep * 0.7f)) continue;
+                    std::vector<glm::vec2> ln = trace(sp, major);
+                    if(ln.size() >= 4) out.push_back(std::move(ln));
+                }
+        };
+        // Street density: arterial (major) + local (minor) spacing, in world metres.
+        const float majorSep = std::max(spacing * 0.5f, cfg.getFloat("sim.proc.arterial_spacing_m",
+                                                                      spacing * 2.0f));
+        const float minorSep = std::max(spacing * 0.3f, cfg.getFloat("sim.proc.street_spacing_m",
+                                                                     spacing));
+        seedSet(true, majorSep, majors);
+        seedSet(false, minorSep, minors);
+        if(majors.empty() || minors.empty())
+        {
+            LOG_ERROR("[city] tensor field produced no streamlines");
+            return 0;
+        }
+
+        // ---- Intersections: rasterize polylines onto a coarse grid; a cell touched by both a
+        //      major and a minor line is a crossing -> one shared node there. ----
+        const float cell = spacing * 0.6f;
+        auto cellKey = [&](glm::vec2 p) {
+            return std::pair<int, int>(static_cast<int>(std::floor(p.x / cell)),
+                                       static_cast<int>(std::floor(p.y / cell)));
+        };
+        // For each cell: which (line, point-index) of each family pass through it.
+        std::map<std::pair<int, int>, std::vector<std::pair<int, int>>> majCell, minCell;
+        for(int mi = 0; mi < static_cast<int>(majors.size()); ++mi)
+            for(int pi = 0; pi < static_cast<int>(majors[mi].size()); ++pi)
+                majCell[cellKey(majors[mi][pi])].push_back({mi, pi});
+        for(int mj = 0; mj < static_cast<int>(minors.size()); ++mj)
+            for(int pj = 0; pj < static_cast<int>(minors[mj].size()); ++pj)
+                minCell[cellKey(minors[mj][pj])].push_back({mj, pj});
+
+        struct Cross { int pidx; uint32_t node; };
+        std::vector<std::vector<Cross>> majCross(majors.size()), minCross(minors.size());
+        std::map<uint32_t, glm::vec2> posOf;
+        uint32_t nextNode = 1;
+        for(const auto& [k, majList] : majCell)
+        {
+            auto it = minCell.find(k);
+            if(it == minCell.end()) continue; // not a crossing cell
+            // Node at the first major point in this cell.
+            const glm::vec2 np = majors[majList.front().first][majList.front().second];
+            const uint32_t id = nextNode++;
+            posOf[id] = np;
+            { Node n; n.id = id; n.pos = np; addNode(n); }
+            for(const auto& [mi, pi] : majList) majCross[mi].push_back({pi, id});
+            for(const auto& [mj, pj] : it->second) minCross[mj].push_back({pj, id});
+        }
+        if(posOf.empty())
+        {
+            LOG_ERROR("[city] tensor streamlines never crossed");
+            return 0;
+        }
+
+        // ---- Build segments: split each line at its crossings into chords between consecutive
+        //      distinct nodes. Major lines = ARTERIAL, minor = LOCAL (a free class hierarchy). ----
+        uint32_t segId = 0;
+        std::vector<std::pair<uint32_t, RoadClass>> twoWay;
+        std::set<std::pair<uint32_t, uint32_t>> haveEdge;
+        auto build = [&](std::vector<std::vector<Cross>>& crossOf, RoadClass cls) {
+            for(auto& cr : crossOf)
+            {
+                std::sort(cr.begin(), cr.end(),
+                          [](const Cross& a, const Cross& b) { return a.pidx < b.pidx; });
+                for(std::size_t i = 0; i + 1 < cr.size(); ++i)
+                {
+                    const uint32_t a = cr[i].node, b = cr[i + 1].node;
+                    if(a == b) continue;
+                    const std::pair<uint32_t, uint32_t> e(std::min(a, b), std::max(a, b));
+                    if(haveEdge.count(e)) continue;
+                    const glm::vec2 pa = posOf[a], pb = posOf[b];
+                    const float len = glm::length(pb - pa);
+                    if(len < spacing * 0.2f) continue; // drop tiny stubs
+                    haveEdge.insert(e);
+                    const RoadClassSpec spec = classSpec(cls);
+                    RoadSegment s{};
+                    s.id = segId;
+                    s.fromNode = a;
+                    s.toNode = b;
+                    s.dir = (pb - pa) / len;
+                    s.length = len;
+                    s.lanes = spec.lanes;
+                    s.speedLimit = spec.speed;
+                    s.roadClass = cls;
+                    addSegment(s);
+                    twoWay.emplace_back(segId, cls);
+                    ++segId;
+                }
+            }
+        };
+        build(majCross, RoadClass::ARTERIAL);
+        build(minCross, RoadClass::LOCAL);
+        for(const auto& [fid, cls] : twoWay)
+            makeTwoWay(fid, laneWidth, classSpec(cls).medianWidth);
+
+        LOG_INFO("generated tensor-field city: {n} directed segments, {nd} junctions",
+                 PARAM(n, m_segments.size()), PARAM(nd, posOf.size()));
         return m_segments.size();
     }
 
