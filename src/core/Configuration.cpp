@@ -113,6 +113,18 @@ namespace tfv
         // Simulation / reproducibility
         m_values["sim.master_seed"] = "12345";
 
+        // Procedural world generation (default ON). Set sim.procedural=0 to load the CSVs
+        // (data.city_file + data.vehicles_file) instead. Fully deterministic for the seed above.
+        m_values["sim.procedural"] = "1";
+        m_values["sim.proc.rows"] = "6";        // grid rows (intersections)
+        m_values["sim.proc.cols"] = "8";        // grid cols
+        m_values["sim.proc.spacing_m"] = "160"; // block size (px == m here)
+        m_values["sim.proc.jitter_m"] = "40";   // per-node position jitter
+        m_values["sim.proc.keep_prob"] = "0.8"; // chance a redundant grid edge survives
+        m_values["sim.proc.two_way"] = "1";     // expand each street into a two-way road
+        m_values["sim.proc.lanes"] = "1";       // lanes per direction
+        m_values["sim.proc.vehicles"] = "60";   // number of vehicles to spawn
+
         // Agent decision layer (Phase 2)
         m_values["sim.default_brain"] = "rule";
         m_values["perf.decision_hz"] = "10.0";

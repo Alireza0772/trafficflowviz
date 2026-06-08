@@ -76,9 +76,16 @@ int main(int argc, char** argv)
     auto& cfg = TFV_CONFIG();
     cfg.initialize(std::nullopt, argc, argv); // trafficflowviz.conf + --key=value overrides
 
-    const std::string cityFile = cfg.getString("data.city_file", "roads/roads_complex.csv");
-    const std::string vehiclesFile = cfg.getString("data.vehicles_file", "vehicles/vehicles.csv");
-    const std::string signsFile = cfg.getString("data.signs_file", "roads/signs.csv");
+    // In procedural mode the CSV inputs are unused; record honest markers in the manifest so a
+    // replay relies on the seed + the sim.proc.* config snapshot (both captured below), not on
+    // CSV paths that never fed this run.
+    const bool procedural = cfg.getInt("sim.procedural", 1) != 0;
+    const std::string cityFile =
+        procedural ? "<procedural-grid>" : cfg.getString("data.city_file", "roads/roads_complex.csv");
+    const std::string vehiclesFile =
+        procedural ? "<procedural-spawn>" : cfg.getString("data.vehicles_file", "vehicles/vehicles.csv");
+    const std::string signsFile =
+        procedural ? "" : cfg.getString("data.signs_file", "roads/signs.csv");
     const int ticks = std::max(1, cfg.getInt("export.ticks", 600));
     const int everyN = std::max(1, cfg.getInt("sim.export.every_n", 1));
     const std::string outDir = cfg.getString("export.dir", ".");

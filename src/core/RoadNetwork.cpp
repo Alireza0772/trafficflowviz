@@ -7,10 +7,13 @@
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <functional>
 #include <glm/glm.hpp>
 #include <iostream>
 #include <limits>
+#include <numeric>
 #include <queue>
+#include <random>
 #include <sstream>
 #include <unordered_set>
 
@@ -308,6 +311,17 @@ namespace tfv
         {
             ids.push_back(id);
         }
+        std::sort(ids.begin(), ids.end()); // stable, deterministic order (maps iterate unordered)
+        return ids;
+    }
+
+    std::vector<uint32_t> RoadNetwork::getNodeIds() const
+    {
+        std::vector<uint32_t> ids;
+        ids.reserve(m_nodes.size());
+        for(const auto& [id, _] : m_nodes)
+            ids.push_back(id);
+        std::sort(ids.begin(), ids.end()); // deterministic order for reproducible consumers
         return ids;
     }
 
@@ -429,6 +443,105 @@ namespace tfv
                 break; // exactly one forward visual
             }
         return revId;
+    }
+
+    std::size_t RoadNetwork::generatePerturbedGrid(int rows, int cols, float spacing, float jitter,
+                                                   float keepProb, uint64_t seed, bool twoWay,
+                                                   float laneWidth, float medianWidth,
+                                                   int lanesPerDir)
+    {
+        clear();
+        if(rows < 1 || cols < 1)
+            return 0;
+        // Clamp jitter so two adjacent nodes can never coincide: each is shifted by up to
+        // `jitter`, so an edge stays >= (spacing - 2*jitter) long. Capping at 0.45*spacing keeps
+        // every segment >= 0.1*spacing, which guarantees glm::normalize(dir) is finite (no NaN).
+        jitter = std::clamp(jitter, 0.0f, 0.45f * spacing);
+        std::mt19937_64 rng(seed);
+        std::uniform_real_distribution<float> jit(-jitter, jitter);
+        std::uniform_real_distribution<float> keep(0.0f, 1.0f);
+        const int lanes = std::max(1, lanesPerDir);
+
+        // Place nodes on a grid (row-major; id = index+1), each jittered for an organic look.
+        // A small margin keeps coordinates positive; SimulationLayer::fitToView() frames them.
+        const float margin = spacing;
+        auto nodeId = [cols](int r, int c) { return static_cast<uint32_t>(r * cols + c + 1); };
+        for(int r = 0; r < rows; ++r)
+            for(int c = 0; c < cols; ++c)
+            {
+                Node n;
+                n.id = nodeId(r, c);
+                n.pos = {margin + c * spacing + jit(rng), margin + r * spacing + jit(rng)};
+                addNode(n);
+            }
+
+        // Candidate undirected grid edges (right + down neighbours), as 0-based index pairs.
+        const int N = rows * cols;
+        std::vector<std::pair<int, int>> edges;
+        edges.reserve(static_cast<std::size_t>(2 * N));
+        for(int r = 0; r < rows; ++r)
+            for(int c = 0; c < cols; ++c)
+            {
+                const int idx = r * cols + c;
+                if(c + 1 < cols)
+                    edges.emplace_back(idx, idx + 1);     // east
+                if(r + 1 < rows)
+                    edges.emplace_back(idx, idx + cols);  // south
+            }
+
+        // Random spanning tree (union-find over shuffled edges) guarantees a connected graph;
+        // every other edge is kept with probability keepProb. Shuffle order + the keep draws are
+        // deterministic for `seed`, so the whole layout is reproducible.
+        std::shuffle(edges.begin(), edges.end(), rng);
+        std::vector<int> parent(static_cast<std::size_t>(N));
+        std::iota(parent.begin(), parent.end(), 0);
+        std::function<int(int)> find = [&](int x) {
+            while(parent[static_cast<std::size_t>(x)] != x)
+            {
+                parent[static_cast<std::size_t>(x)] =
+                    parent[static_cast<std::size_t>(parent[static_cast<std::size_t>(x)])];
+                x = parent[static_cast<std::size_t>(x)];
+            }
+            return x;
+        };
+
+        uint32_t segId = 0;
+        std::vector<uint32_t> twoWayIds;
+        for(const auto& [a, b] : edges)
+        {
+            const int ra = find(a), rb = find(b);
+            const bool treeEdge = (ra != rb);
+            if(treeEdge)
+                parent[static_cast<std::size_t>(ra)] = rb; // always keep tree edges (connectivity)
+            else if(keep(rng) > keepProb)
+                continue; // a redundant edge we chose to drop
+
+            const uint32_t from = static_cast<uint32_t>(a) + 1;
+            const uint32_t to = static_cast<uint32_t>(b) + 1;
+            const Node* na = getNode(from);
+            const Node* nb = getNode(to);
+            if(!na || !nb)
+                continue;
+            RoadSegment s{};
+            s.id = segId;
+            s.fromNode = from;
+            s.toNode = to;
+            s.dir = glm::normalize(nb->pos - na->pos);
+            s.length = glm::length(nb->pos - na->pos);
+            s.lanes = lanes;
+            s.speedLimit = 13.9f;
+            addSegment(s);
+            if(twoWay)
+                twoWayIds.push_back(segId);
+            ++segId;
+        }
+        if(twoWay)
+            for(uint32_t fid : twoWayIds)
+                makeTwoWay(fid, laneWidth, medianWidth);
+
+        LOG_INFO("generated {count} directed segments on a {r}x{c} perturbed grid",
+                 PARAM(count, m_segments.size()), PARAM(r, rows), PARAM(c, cols));
+        return m_segments.size();
     }
 
     void RoadNetwork::addNode(const Node& node)

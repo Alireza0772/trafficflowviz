@@ -61,6 +61,19 @@ namespace tfv
         /** Get all segment IDs in the network */
         std::vector<uint32_t> getSegmentIds() const;
 
+        /** Get all node IDs in the network */
+        std::vector<uint32_t> getNodeIds() const;
+
+        /** Procedurally build a connected, perturbed NxM street grid (clears the network first).
+         *  Nodes sit on a grid of `spacing` (px==m here), each shifted by up to `jitter` in x/y
+         *  for an organic look. A random spanning tree guarantees connectivity; each remaining
+         *  grid edge is kept with probability `keepProb` (so ~ (1-keepProb) are dropped). When
+         *  `twoWay`, every street is expanded via makeTwoWay (paired reverse + median). Fully
+         *  deterministic for a given `seed`. Returns the number of directed segments created. */
+        std::size_t generatePerturbedGrid(int rows, int cols, float spacing, float jitter,
+                                          float keepProb, uint64_t seed, bool twoWay,
+                                          float laneWidth, float medianWidth, int lanesPerDir);
+
         /** Add a new segment to the network */
         void addSegment(const RoadSegment& segment);
 

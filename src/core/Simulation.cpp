@@ -25,6 +25,38 @@ namespace tfv
     bool Simulation::initialize(const std::filesystem::path& cityInformationPath,
                                 const std::filesystem::path& vehicleInformationPath)
     {
+        // Procedural mode (default): synthesize a perturbed two-way street grid and spawn
+        // routed vehicles instead of loading the CSVs. Deterministic from the master seed.
+        // Only fires when no network was supplied via the constructor, so the constructor-
+        // injected path (tests/tools) is untouched; the golden gates use initialize(vector)
+        // directly and never reach here. Set sim.procedural=0 to load the CSVs instead.
+        {
+            auto& cfg = TFV_CONFIG();
+            if(cfg.getInt("sim.procedural", 1) != 0 && !m_roadNetwork)
+            {
+                m_roadNetwork = new RoadNetwork();
+                const uint64_t seed = cfg.getMasterSeed();
+                m_roadNetwork->generatePerturbedGrid(
+                    cfg.getInt("sim.proc.rows", 6), cfg.getInt("sim.proc.cols", 8),
+                    cfg.getFloat("sim.proc.spacing_m", 160.0f),
+                    cfg.getFloat("sim.proc.jitter_m", 40.0f),
+                    cfg.getFloat("sim.proc.keep_prob", 0.8f), seed,
+                    cfg.getInt("sim.proc.two_way", 1) != 0,
+                    cfg.getFloat("sim.lane_width_m", 3.5f),
+                    cfg.getFloat("sim.median_width_m", 3.5f), cfg.getInt("sim.proc.lanes", 1));
+                auto vehicles = spawnVehiclesProcedural(cfg.getInt("sim.proc.vehicles", 60), seed);
+                if(vehicles.empty())
+                {
+                    LOG_ERROR("Procedural generation produced no vehicles");
+                    return false;
+                }
+                const bool ok = initialize(std::move(vehicles));
+                if(ok)
+                    m_continuousTraffic = true; // arrival re-targeting (gates never set this)
+                return ok;
+            }
+        }
+
         // Load road network (CSV) if one was not supplied via the constructor.
         if(!m_roadNetwork)
         {
@@ -79,6 +111,13 @@ namespace tfv
         // Seed the deterministic RNG stream from the configured master seed so
         // routing choices are reproducible for a given seed (statistical tier).
         m_rng.seed(static_cast<std::mt19937::result_type>(TFV_CONFIG().getMasterSeed()));
+
+        // Continuous-traffic re-targeting defaults OFF here; only the procedural init path
+        // re-enables it after this returns. The destination pool is the sorted node-id set
+        // (populated regardless; read only when m_continuousTraffic is true).
+        m_continuousTraffic = false;
+        m_nodeIds = m_roadNetwork->getNodeIds();
+        std::sort(m_nodeIds.begin(), m_nodeIds.end());
 
         // Reset state.
         m_world.clear();
@@ -641,6 +680,78 @@ namespace tfv
         return p;
     }
 
+    std::vector<Vehicle> Simulation::spawnVehiclesProcedural(int n, uint64_t seed) const
+    {
+        std::vector<Vehicle> out;
+        if(!m_roadNetwork || n <= 0)
+            return out;
+        std::vector<uint32_t> segIds = m_roadNetwork->getSegmentIds();
+        std::vector<uint32_t> nodeIds = m_roadNetwork->getNodeIds();
+        if(segIds.empty() || nodeIds.empty())
+            return out;
+        std::sort(segIds.begin(), segIds.end()); // deterministic pools (maps iterate unordered)
+        std::sort(nodeIds.begin(), nodeIds.end());
+
+        // Separate stream from the grid generator (offset seed) so layout + spawn don't correlate.
+        std::mt19937_64 rng(seed ^ 0xD1B54A32D192ED03ULL);
+        std::uniform_int_distribution<std::size_t> segPick(0, segIds.size() - 1);
+        std::uniform_int_distribution<std::size_t> nodePick(0, nodeIds.size() - 1);
+        std::uniform_real_distribution<float> posPick(0.1f, 0.9f);
+
+        // Avoid spawning two cars on top of each other: track placed positions per (segment,lane).
+        std::unordered_map<uint64_t, std::vector<float>> occ;
+        out.reserve(static_cast<std::size_t>(n));
+        for(int i = 0; i < n; ++i)
+        {
+            const RoadSegment* s = nullptr;
+            uint32_t segId = 0;
+            int lane = 0;
+            float pos = 0.5f;
+            for(int attempt = 0; attempt < 8; ++attempt) // retry to dodge a same-lane overlap
+            {
+                segId = segIds[segPick(rng)];
+                s = m_roadNetwork->getSegment(segId);
+                if(!s)
+                    continue;
+                const int lc = std::max(1, s->lanes);
+                lane = (lc > 1) ? static_cast<int>(rng() % static_cast<uint64_t>(lc)) : 0;
+                pos = posPick(rng);
+                const uint64_t key =
+                    (static_cast<uint64_t>(segId) << 8) | static_cast<uint64_t>(lane);
+                bool clash = false;
+                for(float p : occ[key])
+                    if(std::fabs(p - pos) * s->length < 6.0f) // ~ a car length of clearance
+                    {
+                        clash = true;
+                        break;
+                    }
+                if(!clash)
+                {
+                    occ[key].push_back(pos);
+                    break;
+                }
+            }
+            if(!s)
+                continue;
+            Vehicle v;
+            // Id from the placed count (not the loop index) so skipped placements leave no gaps.
+            v.id = static_cast<uint64_t>(out.size() + 1);
+            v.segmentId = segId;
+            v.laneIndex = static_cast<uint8_t>(lane);
+            v.position = pos;
+            v.vel = s->dir * (0.4f * s->speedLimit); // modest initial cruise; init re-aligns it
+            // Random destination node distinct from the node we're heading into, so route() is
+            // non-trivial (the grid is connected, so a path exists).
+            uint32_t dst = s->toNode;
+            for(int attempt = 0; attempt < 8 && dst == s->toNode; ++attempt)
+                dst = nodeIds[nodePick(rng)];
+            v.destNode = dst;
+            out.push_back(v);
+        }
+        LOG_INFO("spawned {count} procedural vehicles", PARAM(count, out.size()));
+        return out;
+    }
+
     const Sign* Simulation::nearestStopAhead(const Vehicle& v) const
     {
         if(!m_roadNetwork)
@@ -998,6 +1109,24 @@ namespace tfv
                     const auto* fromNode = m_roadNetwork->getNode(segment->toNode);
                     if(fromNode && !fromNode->outgoing.empty())
                     {
+                        // Continuous traffic (procedural): on arrival (route consumed), roll a
+                        // fresh random destination and re-route from this node so the vehicle
+                        // keeps flowing instead of falling back to wander. Gated by
+                        // m_continuousTraffic — only the procedural init path sets it, so the
+                        // golden gates (which never enable it) draw no RNG here and stay
+                        // byte-identical. Draws happen in deterministic ascending-id order.
+                        if(m_continuousTraffic && v.routeIdx >= v.route.size() &&
+                           m_nodeIds.size() > 1) // >1: a single-node pool can only re-pick 'here'
+                        {
+                            const uint32_t here = segment->toNode;
+                            uint32_t dst = here;
+                            for(int attempt = 0; attempt < 8 && dst == here; ++attempt)
+                                dst = m_nodeIds[m_rng() % m_nodeIds.size()];
+                            v.destNode = dst;
+                            v.route = m_roadNetwork->route(here, dst);
+                            v.routeIdx = 0;
+                        }
+
                         // Deterministic route-following (no RNG): take the route's next
                         // segment if it is a LEGAL outgoing movement here, else the first
                         // legal, non-U-turn outgoing. With no movement table and one-way nets,

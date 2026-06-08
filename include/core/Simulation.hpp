@@ -154,6 +154,12 @@ namespace tfv
         // laneCount==1 -> zero lateral offset (centerline, byte-identical to Phase 5).
         glm::vec2 segWorldPos(const RoadSegment& seg, float position, uint8_t laneIndex) const;
 
+        // Procedural vehicle spawner: n vehicles on random segments (random lane/position) with
+        // random destination nodes, so the BFS router is actually exercised. Deterministic for
+        // `seed`. Used only by the procedural init path; the golden gates build their vehicles
+        // explicitly and never call this.
+        std::vector<Vehicle> spawnVehiclesProcedural(int n, uint64_t seed) const;
+
         // MOBIL lane-change evaluator (Phase 6). Phase A, read-only over the frame:
         // fills desiredLaneChange[i] in {-1,0,+1} for multi-lane segments and mirrors
         // the decision + turn-signal bits into the held action. Commit is in Phase B.
@@ -188,6 +194,13 @@ namespace tfv
         std::unordered_map<uint64_t, uint32_t> m_signCleared; // id -> stop/yield sign id cleared on its segment
         uint64_t m_tick{0};                         // simulation tick counter
         float m_decisionHz{10.0f};                  // brain decision rate (Hz)
+
+        // Procedural / continuous-traffic mode. Set ONLY by the procedural init path; the
+        // golden gates never enable it, so the gated re-target below is a no-op there and the
+        // pinned digests stay byte-identical. m_nodeIds is the sorted node-id pool used to roll
+        // a fresh destination when a vehicle arrives (exhausts its route).
+        bool m_continuousTraffic{false};
+        std::vector<uint32_t> m_nodeIds;
 
         // Central traffic-light controller (Phase 4)
         LightController m_lightController;
