@@ -163,12 +163,6 @@ namespace tfv
             return;
         const ThemePalette pal = themePalette(m_theme);
         const float laneWpx = 3.5f;
-        auto brighten = [](RGB8 c, float f) {
-            auto cl = [](float v) {
-                return static_cast<uint8_t>(std::max(0.0f, std::min(255.0f, v)));
-            };
-            return RGB8{cl(c.r * f), cl(c.g * f), cl(c.b * f)};
-        };
         // Filled disc (triangle fan) + circle outline, both in framebuffer pixels.
         auto disc = [&](float cx, float cy, float rad, RGB8 col) {
             if(rad < 1.0f)
@@ -205,8 +199,6 @@ namespace tfv
                 py = y;
             }
         };
-        (void)brighten;
-        (void)laneWpx;
         // ONLY roundabouts get a drawn shape (the round island). 3-/4-way junctions are just the
         // road crossing itself (marked by their signal head) — drawing a disc there made them
         // look like roundabouts, which they are not.
@@ -215,13 +207,24 @@ namespace tfv
             const Node* n = m_net->getNode(id);
             if(!n || n->junction != JunctionStyle::ROUNDABOUT)
                 continue;
-            const int deg = static_cast<int>(std::max(n->incoming.size(), n->outgoing.size()));
             const float cx = n->pos.x * m_scale + static_cast<float>(m_panX);
             const float cy = n->pos.y * m_scale + static_cast<float>(m_panY);
-            const float rad = std::max(7.0f, std::min(30.0f, deg * 3.2f)) * m_scale;
-            disc(cx, cy, rad, pal.asphalt);                                  // paved annulus base
-            ring(cx, cy, rad, pal.center, std::max(1, static_cast<int>(m_scale))); // outer lane edge
-            disc(cx, cy, rad * 0.45f, RGB8{58, 102, 66});                    // green centre island
+            if(n->roundaboutR > 0.0f)
+            {
+                // Topological roundabout: the ring ROADS already draw the circle, so just fill
+                // the centre island inside them.
+                const float islandR = std::max(3.0f, (n->roundaboutR - laneWpx * 1.2f)) * m_scale;
+                disc(cx, cy, islandR, RGB8{58, 102, 66});
+            }
+            else
+            {
+                // Visual-only roundabout (too few arms to ring): a paved disc + ring + island.
+                const int deg = static_cast<int>(std::max(n->incoming.size(), n->outgoing.size()));
+                const float rad = std::max(7.0f, std::min(30.0f, deg * 3.2f)) * m_scale;
+                disc(cx, cy, rad, pal.asphalt);
+                ring(cx, cy, rad, pal.center, std::max(1, static_cast<int>(m_scale)));
+                disc(cx, cy, rad * 0.45f, RGB8{58, 102, 66});
+            }
         }
     }
 

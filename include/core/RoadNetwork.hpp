@@ -91,6 +91,12 @@ namespace tfv
          *  Roundabout-vs-junction near the 3/4 boundary is a seeded coin flip. Deterministic. */
         void classifyJunctions(uint64_t seed);
 
+        /** Turn every ROUNDABOUT node into a real one-way circulating ring: replace the centre
+         *  point with a ring of nodes (one per arm), reconnect each incident road to its ring
+         *  node, and link the ring nodes in a one-way loop, so vehicles drive AROUND the island
+         *  instead of through it. Skips a node with <3 arms (left as a visual roundabout). */
+        void buildRoundabouts(float laneWidth);
+
         /** Add a new segment to the network */
         void addSegment(const RoadSegment& segment);
 

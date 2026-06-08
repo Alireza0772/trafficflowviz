@@ -830,11 +830,168 @@ namespace tfv
         for(const auto& [fid, cls] : twoWay)
             makeTwoWay(fid, laneWidth, classSpec(cls).medianWidth);
 
-        classifyJunctions(seed); // tag 3-way / 4-way / roundabout from node degree
+        classifyJunctions(seed);      // tag 3-way / 4-way / roundabout from node degree
+        buildRoundabouts(laneWidth);  // turn roundabout nodes into real circulating rings
 
         LOG_INFO("generated tensor-field city: {n} directed segments, {nd} junctions",
                  PARAM(n, m_segments.size()), PARAM(nd, posOf.size()));
         return m_segments.size();
+    }
+
+    void RoadNetwork::buildRoundabouts(float laneWidth)
+    {
+        // Snapshot roundabout centre ids first (we add nodes/segments below).
+        std::vector<uint32_t> centers;
+        for(const auto& [id, n] : m_nodes)
+            if(n.junction == JunctionStyle::ROUNDABOUT)
+                centers.push_back(id);
+        std::sort(centers.begin(), centers.end());
+        uint32_t nextNode = 0, nextSeg = 0;
+        for(const auto& [id, n] : m_nodes)
+            nextNode = std::max(nextNode, id);
+        for(const auto& [id, s] : m_segments)
+            nextSeg = std::max(nextSeg, id);
+        ++nextNode;
+        ++nextSeg;
+
+        // Move segment `sid`'s endpoint that currently == oldN to newN, fixing the node
+        // incoming/outgoing lists, the segment dir/length, and the render visual endpoint.
+        auto rewire = [&](uint32_t sid, uint32_t oldN, uint32_t newN) {
+            RoadSegment* s = getSegment(sid);
+            if(!s)
+                return;
+            const bool fromMoved = (s->fromNode == oldN);
+            if(fromMoved)
+                s->fromNode = newN;
+            else if(s->toNode == oldN)
+                s->toNode = newN;
+            else
+                return;
+            if(Node* oN = getNode(oldN))
+            {
+                auto& lst = fromMoved ? oN->outgoing : oN->incoming;
+                lst.erase(std::remove(lst.begin(), lst.end(), sid), lst.end());
+            }
+            if(Node* nN = getNode(newN))
+                (fromMoved ? nN->outgoing : nN->incoming).push_back(sid);
+            const Node* a = getNode(s->fromNode);
+            const Node* b = getNode(s->toNode);
+            if(a && b)
+            {
+                const glm::vec2 v = b->pos - a->pos;
+                const float L = glm::length(v);
+                if(L > 1e-3f)
+                {
+                    s->dir = v / L;
+                    s->length = L;
+                }
+            }
+            for(auto& vis : m_seg)
+                if(vis.id == sid)
+                {
+                    if(const Node* nn = getNode(newN))
+                    {
+                        if(fromMoved)
+                        {
+                            vis.x1 = static_cast<int>(nn->pos.x);
+                            vis.y1 = static_cast<int>(nn->pos.y);
+                        }
+                        else
+                        {
+                            vis.x2 = static_cast<int>(nn->pos.x);
+                            vis.y2 = static_cast<int>(nn->pos.y);
+                        }
+                        const float dx = static_cast<float>(vis.x2 - vis.x1);
+                        const float dy = static_cast<float>(vis.y2 - vis.y1);
+                        vis.length = std::sqrt(dx * dx + dy * dy);
+                    }
+                    break;
+                }
+        };
+
+        for(uint32_t R : centers)
+        {
+            const Node* rn = getNode(R);
+            if(!rn)
+                continue;
+            const glm::vec2 Rc = rn->pos;
+            // Group incident directed segments by their OTHER node (a two-way arm = fwd+rev pair).
+            std::map<uint32_t, std::vector<uint32_t>> arms; // other node -> incident segment ids
+            for(const auto& [sid, s] : m_segments)
+            {
+                if(s.fromNode == R && s.toNode != R)
+                    arms[s.toNode].push_back(sid);
+                else if(s.toNode == R && s.fromNode != R)
+                    arms[s.fromNode].push_back(sid);
+            }
+            if(arms.size() < 3)
+                continue; // too few arms — leave it as a visual-only roundabout
+
+            // Ring radius grows with arm count but is capped to a fraction of the SHORTEST arm so
+            // a ring node never lands past its road's far end (which would invert the road).
+            float minArm = 1e30f;
+            for(const auto& [other, segs] : arms)
+            {
+                (void)segs;
+                if(const Node* on = getNode(other))
+                    minArm = std::min(minArm, glm::length(on->pos - Rc));
+            }
+            const float r = std::max(laneWidth * 2.5f,
+                                     std::min(laneWidth * 1.1f * static_cast<float>(arms.size()),
+                                              0.35f * minArm));
+            struct RingNode { uint32_t id; float ang; };
+            std::vector<RingNode> ring;
+            for(const auto& [other, segs] : arms) // map: sorted by `other` -> deterministic
+            {
+                const Node* on = getNode(other);
+                if(!on)
+                    continue;
+                glm::vec2 d = on->pos - Rc;
+                const float L = glm::length(d);
+                if(L < 1e-3f)
+                    continue;
+                d /= L;
+                const uint32_t rid = nextNode++;
+                Node nn;
+                nn.id = rid;
+                nn.pos = Rc + d * r;
+                nn.junction = JunctionStyle::RING;
+                addNode(nn);
+                for(uint32_t sid : segs)
+                    rewire(sid, R, rid);
+                ring.push_back({rid, std::atan2(d.y, d.x)});
+            }
+            if(ring.size() < 3)
+                continue;
+            std::sort(ring.begin(), ring.end(),
+                      [](const RingNode& a, const RingNode& b) { return a.ang < b.ang; });
+            // One-way circulating loop through the ring nodes (counter-clockwise by angle).
+            for(std::size_t i = 0; i < ring.size(); ++i)
+            {
+                const uint32_t a = ring[i].id, b = ring[(i + 1) % ring.size()].id;
+                const Node* na = getNode(a);
+                const Node* nb = getNode(b);
+                if(!na || !nb)
+                    continue;
+                const glm::vec2 v = nb->pos - na->pos;
+                const float L = glm::length(v);
+                if(L < 1e-3f)
+                    continue;
+                RoadSegment s{};
+                s.id = nextSeg++;
+                s.fromNode = a;
+                s.toNode = b;
+                s.dir = v / L;
+                s.length = L;
+                s.lanes = 1;
+                s.speedLimit = 8.0f; // slow circulation
+                s.oneway = true;
+                s.roadClass = RoadClass::COLLECTOR;
+                addSegment(s);
+            }
+            if(Node* c = getNode(R)) // re-fetch (maps may have rehashed)
+                c->roundaboutR = r;  // now isolated; the island is drawn here
+        }
     }
 
     void RoadNetwork::classifyJunctions(uint64_t seed)
@@ -889,8 +1046,8 @@ namespace tfv
         {
             if(static_cast<int>(node.incoming.size()) < minApproaches)
                 continue;
-            if(node.junction == JunctionStyle::ROUNDABOUT)
-                continue; // roundabouts yield, they don't signalize
+            if(node.junction == JunctionStyle::ROUNDABOUT || node.junction == JunctionStyle::RING)
+                continue; // roundabouts (and their ring nodes) yield, they don't signalize
             Intersection x;
             x.nodeId = nodeId;
             x.approaches = node.incoming;

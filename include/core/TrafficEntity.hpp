@@ -199,7 +199,8 @@ namespace tfv
         PLAIN = 0,
         THREE_WAY,
         FOUR_WAY,
-        ROUNDABOUT
+        ROUNDABOUT,
+        RING // a node ON a roundabout's circulating ring (not signalized, not drawn individually)
     };
 
     struct Node
@@ -210,6 +211,7 @@ namespace tfv
         std::vector<uint32_t> outgoing; // Outgoing segment IDs
         uint32_t intersectionId{0};     // owning intersection (Phase 4; unused now)
         JunctionStyle junction{JunctionStyle::PLAIN}; // render style (procedural; not hashed)
+        float roundaboutR{0.0f};        // ring radius if this is a topological roundabout centre
     };
 
     // Statistics for a road segment
