@@ -126,6 +126,7 @@ namespace tfv
         m_values["sim.proc.hubs"] = "3";               // canonical traffic centers (roundabout sites)
         m_values["sim.proc.arterial_spacing_m"] = "320"; // spacing between major (arterial) roads
         m_values["sim.proc.street_spacing_m"] = "160";   // spacing between minor (local) streets
+        m_values["sim.proc.oneway_frac"] = "0.15";       // fraction of roads made one-way (guarded)
         // Grid-mode-only knobs:
         m_values["sim.proc.jitter_m"] = "40";   // grid: per-node position jitter
         m_values["sim.proc.keep_prob"] = "0.8"; // grid: chance a redundant edge survives

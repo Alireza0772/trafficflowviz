@@ -100,6 +100,14 @@ namespace tfv
         /** Add a new segment to the network */
         void addSegment(const RoadSegment& segment);
 
+        /** Remove a segment (and its visual) from the network, updating node in/out lists. */
+        void removeSegment(uint32_t id);
+
+        /** Convert ~`fraction` of two-way roads to one-way, but ONLY where the opposite direction
+         *  stays reachable by another path (so routing never strands) — connectivity-guarded.
+         *  Deterministic for `seed`. */
+        void makeSomeOneWay(float fraction, uint64_t seed);
+
         /** Convert an existing one-way segment into a two-way road by synthesizing its
          *  opposing reverse segment (cross-linked via pairId, the two directions shifted
          *  apart by a median derived from laneWidth + medianWidth). The reverse id is a

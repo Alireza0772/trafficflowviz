@@ -301,6 +301,7 @@ namespace tfv
             const float half = lanes * laneWpx * 0.5f;
             const float medianOffset = s.medianOffset;
             const bool twoway = (s.pairId != 0) || (s.medianOffset != 0.0f);
+            const bool oneWay = seg && seg->oneway && seg->pairId == 0 && seg->roadClass != RoadClass::NONE;
             auto toScreen = [&](float wx, float wy) {
                 return std::pair<int, int>{static_cast<int>(wx * m_scale) + m_panX,
                                            static_cast<int>(wy * m_scale) + m_panY};
@@ -355,6 +356,21 @@ namespace tfv
                         const auto d2 = toScreen(cx2 + nx * off, cy2 + ny * off);
                         drawDashedLine(d1.first, d1.second, d2.first, d2.second);
                     }
+                }
+                // One-way: an amber chevron at the span midpoint pointing along travel direction.
+                if(oneWay)
+                {
+                    const float mx = (cx1 + cx2) * 0.5f, my = (cy1 + cy2) * 0.5f;
+                    const float ux = dx / len, uy = dy / len; // travel dir (A->B)
+                    const float cz = laneWpx * 0.9f;
+                    const auto T = toScreen(mx + ux * cz, my + uy * cz);
+                    const auto Lp = toScreen(mx - ux * cz * 0.4f + nx * cz * 0.7f,
+                                             my - uy * cz * 0.4f + ny * cz * 0.7f);
+                    const auto Rp = toScreen(mx - ux * cz * 0.4f - nx * cz * 0.7f,
+                                             my - uy * cz * 0.4f - ny * cz * 0.7f);
+                    m_r->setColor(250, 225, 110, 255);
+                    m_r->drawLine(Lp.first, Lp.second, T.first, T.second, 1);
+                    m_r->drawLine(Rp.first, Rp.second, T.first, T.second, 1);
                 }
             };
             if(seg && seg->centerline.size() >= 2)

@@ -363,6 +363,100 @@ namespace tfv
         }
     }
 
+    void RoadNetwork::removeSegment(uint32_t id)
+    {
+        auto it = m_segments.find(id);
+        if(it == m_segments.end())
+            return;
+        const uint32_t from = it->second.fromNode, to = it->second.toNode;
+        if(Node* a = getNode(from))
+            a->outgoing.erase(std::remove(a->outgoing.begin(), a->outgoing.end(), id),
+                              a->outgoing.end());
+        if(Node* b = getNode(to))
+            b->incoming.erase(std::remove(b->incoming.begin(), b->incoming.end(), id),
+                              b->incoming.end());
+        m_segments.erase(it);
+        m_seg.erase(std::remove_if(m_seg.begin(), m_seg.end(),
+                                   [id](const RoadVisual& v) { return v.id == id; }),
+                    m_seg.end());
+    }
+
+    void RoadNetwork::makeSomeOneWay(float fraction, uint64_t seed)
+    {
+        if(fraction <= 0.0f)
+            return;
+        // One forward per two-way road (id < pairId so each road is considered once).
+        std::vector<uint32_t> cand;
+        for(const auto& [id, s] : m_segments)
+            if(s.pairId != 0 && !s.oneway && id < s.pairId)
+                cand.push_back(id);
+        std::sort(cand.begin(), cand.end());
+        std::mt19937_64 rng(seed ^ 0xA5A5A5A5A5A5A5A5ULL);
+        std::shuffle(cand.begin(), cand.end(), rng);
+        const std::size_t target =
+            static_cast<std::size_t>(fraction * static_cast<float>(cand.size()));
+
+        // Can `src` reach `dst` over outgoing edges, ignoring segment `banned`?
+        auto reaches = [&](uint32_t src, uint32_t dst, uint32_t banned) -> bool {
+            std::queue<uint32_t> q;
+            std::unordered_set<uint32_t> seen;
+            q.push(src);
+            seen.insert(src);
+            while(!q.empty())
+            {
+                const uint32_t n = q.front();
+                q.pop();
+                if(n == dst)
+                    return true;
+                const Node* nd = getNode(n);
+                if(!nd)
+                    continue;
+                for(uint32_t sid : nd->outgoing)
+                {
+                    if(sid == banned)
+                        continue;
+                    if(const RoadSegment* s = getSegment(sid))
+                        if(seen.insert(s->toNode).second)
+                            q.push(s->toNode);
+                }
+            }
+            return false;
+        };
+
+        std::size_t made = 0;
+        for(uint32_t fid : cand)
+        {
+            if(made >= target)
+                break;
+            RoadSegment* f = getSegment(fid);
+            if(!f || f->oneway || f->pairId == 0)
+                continue;
+            const uint32_t rid = f->pairId;
+            if(!getSegment(rid))
+                continue;
+            const uint32_t A = f->fromNode, B = f->toNode; // forward A->B, reverse rid B->A
+            // Keep A->B, drop B->A — only if B can still reach A another way (no stranding).
+            if(!reaches(B, A, rid))
+                continue;
+            removeSegment(rid);
+            f = getSegment(fid); // re-fetch (erase may rehash)
+            if(!f)
+                continue;
+            f->oneway = true;
+            f->pairId = 0;
+            f->medianOffset = 0.0f; // re-centre the lone carriageway on its centerline
+            for(auto& vis : m_seg)
+                if(vis.id == fid)
+                {
+                    vis.medianOffset = 0.0f;
+                    vis.pairId = 0;
+                    break;
+                }
+            ++made;
+        }
+        LOG_INFO("converted {n} roads to one-way (connectivity-guarded)", PARAM(n, made));
+    }
+
     uint32_t RoadNetwork::makeTwoWay(uint32_t forwardId, float laneWidth, float medianWidth)
     {
         auto it = m_segments.find(forwardId);
@@ -855,6 +949,7 @@ namespace tfv
 
         classifyJunctions(seed);      // tag 3-way / 4-way / roundabout from node degree
         buildRoundabouts(laneWidth);  // turn roundabout nodes into real circulating rings
+        makeSomeOneWay(cfg.getFloat("sim.proc.oneway_frac", 0.15f), seed); // one-way couplets
 
         LOG_INFO("generated tensor-field city: {n} directed segments, {nd} junctions",
                  PARAM(n, m_segments.size()), PARAM(nd, posOf.size()));
