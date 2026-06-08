@@ -100,6 +100,10 @@ namespace tfv
         void setColorEncoding(ColorEncoding e) { m_encoding = e; }
         ColorEncoding colorEncoding() const { return m_encoding; }
 
+        // Alternative node-link "graph" rendering of the network (toggle).
+        void setGraphView(bool on) { m_graphView = on; }
+        bool graphView() const { return m_graphView; }
+
         void setSceneTheme(SceneTheme t) { m_theme = t; }
         SceneTheme sceneTheme() const { return m_theme; }
         RGB8 backgroundColor() const { return themePalette(m_theme).bg; }
@@ -108,6 +112,7 @@ namespace tfv
         void drawJunctions(); // 3-way/4-way intersection pads + roundabout islands
         void drawSigns();     // draw traffic signs as small colored markers
         void drawLights();    // draw traffic-light state per intersection approach
+        void drawGraph(const VehicleMap& vehicles); // node-link graph view (alternative to the map)
 
         Renderer* m_r;
         const RoadNetwork* m_net{nullptr};
@@ -115,6 +120,7 @@ namespace tfv
         int m_panX{0};
         int m_panY{0};
         bool m_antiAliasing{true};
+        bool m_graphView{false};
         ColorEncoding m_encoding{ColorEncoding::Speed};
         SceneTheme m_theme{SceneTheme::StudioDark};
 

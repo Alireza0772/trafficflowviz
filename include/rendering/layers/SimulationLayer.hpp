@@ -51,6 +51,14 @@ namespace tfv
             fitToView();
         }
 
+        // Node-link graph view toggle (alternative to the map rendering).
+        void setGraphView(bool on)
+        {
+            if(m_sceneRenderer)
+                m_sceneRenderer->setGraphView(on);
+        }
+        bool graphView() const { return m_sceneRenderer && m_sceneRenderer->graphView(); }
+
         // Map a logical-point cursor position to world coordinates (inverse of the
         // vehicle render transform). For inspector vehicle picking + the debug overlay.
         glm::vec2 screenToWorld(float logicalX, float logicalY) const;

@@ -9,6 +9,12 @@ namespace tfv
 {
     void SceneRenderer::draw(const VehicleMap& vehicles)
     {
+        if(m_graphView)
+        {
+            drawGraph(vehicles);
+            m_lastSnapshot = vehicles;
+            return;
+        }
         RoadRenderer roadR(m_r, m_panX, m_panY, m_scale, m_antiAliasing, themePalette(m_theme));
         roadR.draw(m_net);
         drawJunctions(); // 3-way / 4-way pads + roundabout islands, on top of the road ribbons
@@ -69,6 +75,85 @@ namespace tfv
                 lampAt(1, 240, 200, 45, cur == LightColor::Amber);
                 lampAt(2, 45, 220, 45, cur == LightColor::Green);
             }
+        }
+    }
+
+    void SceneRenderer::drawGraph(const VehicleMap& vehicles)
+    {
+        if(!m_net)
+            return;
+        auto toScreen = [&](float wx, float wy) {
+            return std::pair<int, int>{static_cast<int>(wx * m_scale) + m_panX,
+                                       static_cast<int>(wy * m_scale) + m_panY};
+        };
+        auto classColor = [](RoadClass rc) -> RGB8 {
+            switch(rc)
+            {
+            case RoadClass::HIGHWAY:   return {240, 150, 60};
+            case RoadClass::ARTERIAL:  return {235, 205, 90};
+            case RoadClass::COLLECTOR: return {120, 200, 230};
+            default:                   return {150, 160, 175}; // LOCAL / NONE
+            }
+        };
+        // Directed edges: one line per segment, colored by class, thickness by lane count, with an
+        // arrowhead near the destination; two-way pairs are nudged apart so both directions show.
+        for(const auto& s : m_net->segments())
+        {
+            const float dx = static_cast<float>(s.x2 - s.x1), dy = static_cast<float>(s.y2 - s.y1);
+            const float len = std::sqrt(dx * dx + dy * dy);
+            if(len < 1e-3f)
+                continue;
+            const float nx = -dy / len, ny = dx / len;
+            const float off = ((s.pairId != 0) || (s.medianOffset != 0.0f)) ? 3.5f : 0.0f;
+            const RoadSegment* seg = m_net->getSegment(s.id);
+            const int lanes = seg ? std::max(1, seg->lanes) : 1;
+            const auto p1 = toScreen(s.x1 + nx * off, s.y1 + ny * off);
+            const auto p2 = toScreen(s.x2 + nx * off, s.y2 + ny * off);
+            const RGB8 c = classColor(s.roadClass);
+            m_r->setColor(c.r, c.g, c.b, 235);
+            m_r->drawLine(p1.first, p1.second, p2.first, p2.second, std::max(1, lanes));
+            float ux = static_cast<float>(p2.first - p1.first), uy = static_cast<float>(p2.second - p1.second);
+            const float ul = std::sqrt(ux * ux + uy * uy);
+            if(ul > 6.0f)
+            {
+                ux /= ul;
+                uy /= ul;
+                const float ah = std::max(5.0f, m_scale * 3.0f);
+                const float bx = p2.first - ux * ah, by = p2.second - uy * ah;
+                const float lx = -uy, ly = ux; // perpendicular
+                m_r->drawLine(p2.first, p2.second, static_cast<int>(bx + lx * ah * 0.5f),
+                              static_cast<int>(by + ly * ah * 0.5f), 1);
+                m_r->drawLine(p2.first, p2.second, static_cast<int>(bx - lx * ah * 0.5f),
+                              static_cast<int>(by - ly * ah * 0.5f), 1);
+            }
+        }
+        // Nodes: square marker sized by degree; roundabouts drawn green to stand out.
+        for(uint32_t id : m_net->getNodeIds())
+        {
+            const Node* n = m_net->getNode(id);
+            if(!n)
+                continue;
+            const int deg = static_cast<int>(std::max(n->incoming.size(), n->outgoing.size()));
+            if(deg == 0)
+                continue;
+            const auto p = toScreen(n->pos.x, n->pos.y);
+            const int sz = std::max(4, std::min(16, 3 + deg * 2));
+            if(n->junction == JunctionStyle::ROUNDABOUT)
+                m_r->setColor(90, 200, 120, 255);
+            else
+                m_r->setColor(235, 235, 245, 255);
+            m_r->fillRect(p.first - sz / 2, p.second - sz / 2, sz, sz);
+        }
+        // Vehicles as small dots, colored by the active encoding.
+        const float v0 = 13.9f;
+        for(const auto& [vid, v] : vehicles)
+        {
+            (void)vid;
+            const auto p = toScreen(v.worldPos.x, v.worldPos.y);
+            const RGB8 c = encodeVehicleColor(v, m_encoding, v0);
+            m_r->setColor(c.r, c.g, c.b, 255);
+            const int d = std::max(2, static_cast<int>(m_scale * 1.2f));
+            m_r->fillRect(p.first - d / 2, p.second - d / 2, d, d);
         }
     }
 

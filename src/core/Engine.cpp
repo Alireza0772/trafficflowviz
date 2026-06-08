@@ -253,6 +253,8 @@ namespace tfv
                 const int warmup = std::max(1, TFV_CONFIG().getInt("app.screenshot_ticks", 30));
                 // Test hook: exercise the live regenerate path (what the UI button does) headlessly.
                 const bool testRegen = TFV_CONFIG().getInt("app.screenshot_regen", 0) != 0;
+                if(TFV_CONFIG().getInt("app.screenshot_graph", 0) != 0 && m_simulationLayer)
+                    m_simulationLayer->setGraphView(true); // capture the node-link graph view
                 for(int i = 0; i < warmup; ++i)
                 {
                     handleEvents();

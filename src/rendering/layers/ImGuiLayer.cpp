@@ -437,6 +437,14 @@ namespace tfv
         ImGui::SetNextWindowSize(ImVec2(330, 360), ImGuiCond_FirstUseEver);
         if(ImGui::Begin("World Generation"))
         {
+            if(m_simulationLayer)
+            {
+                bool graph = m_simulationLayer->graphView();
+                if(ImGui::Checkbox("Graph view", &graph))
+                    m_simulationLayer->setGraphView(graph);
+                ImGui::Separator();
+            }
+
             const char* modes[] = {"city (tensor field)", "grid"};
             ImGui::Combo("Mode", &modeIdx, modes, 2);
             ImGui::InputInt("Seed", &seed);
