@@ -86,6 +86,10 @@ namespace tfv
         int getInt(const std::string& key, int defaultValue) const;
         std::string getString(const std::string& key, const std::string& defaultValue) const;
 
+        /** Set a config value at runtime (e.g. from the generation UI). Stored as a string and
+         *  read back by the typed getters above. */
+        void setValue(const std::string& key, const std::string& value);
+
         // Sorted snapshot of all keys starting with `prefix` (for the run manifest;
         // sorted -> deterministic output).
         std::map<std::string, std::string> snapshot(const std::string& prefix) const;

@@ -33,42 +33,7 @@ namespace tfv
         {
             auto& cfg = TFV_CONFIG();
             if(cfg.getInt("sim.procedural", 1) != 0 && !m_roadNetwork)
-            {
-                m_roadNetwork = new RoadNetwork();
-                const uint64_t seed = cfg.getMasterSeed();
-                const std::string mode = cfg.getString("sim.proc.mode", "city");
-                if(mode == "grid")
-                {
-                    // Legacy uniform two-way grid.
-                    m_roadNetwork->generatePerturbedGrid(
-                        cfg.getInt("sim.proc.rows", 6), cfg.getInt("sim.proc.cols", 8),
-                        cfg.getFloat("sim.proc.spacing_m", 160.0f),
-                        cfg.getFloat("sim.proc.jitter_m", 40.0f),
-                        cfg.getFloat("sim.proc.keep_prob", 0.8f), seed,
-                        cfg.getInt("sim.proc.two_way", 1) != 0,
-                        cfg.getFloat("sim.lane_width_m", 3.5f),
-                        cfg.getFloat("sim.median_width_m", 3.5f), cfg.getInt("sim.proc.lanes", 1));
-                }
-                else
-                {
-                    // Default: organic city — hierarchical road classes grown probabilistically.
-                    m_roadNetwork->generateCity(
-                        cfg.getInt("sim.proc.rows", 7), cfg.getInt("sim.proc.cols", 11),
-                        cfg.getFloat("sim.proc.spacing_m", 160.0f),
-                        cfg.getFloat("sim.proc.jitter_m", 40.0f), seed,
-                        cfg.getFloat("sim.lane_width_m", 3.5f));
-                }
-                auto vehicles = spawnVehiclesProcedural(cfg.getInt("sim.proc.vehicles", 60), seed);
-                if(vehicles.empty())
-                {
-                    LOG_ERROR("Procedural generation produced no vehicles");
-                    return false;
-                }
-                const bool ok = initialize(std::move(vehicles));
-                if(ok)
-                    m_continuousTraffic = true; // arrival re-targeting (gates never set this)
-                return ok;
-            }
+                return initializeProceduralWorld();
         }
 
         // Load road network (CSV) if one was not supplied via the constructor.
@@ -110,6 +75,54 @@ namespace tfv
         }
 
         return initialize(std::move(vehicles));
+    }
+
+    bool Simulation::initializeProceduralWorld()
+    {
+        // Build a FRESH procedural network from the current config, then init the sim on it.
+        // Used by initialize(paths) on first launch and by regenerate() at runtime. We always
+        // allocate a new network (an earlier procedural one is orphaned, not freed — a manual
+        // regenerate happens rarely, so the tiny leak is acceptable and avoids any chance of the
+        // renderer dereferencing a freed network mid-frame).
+        auto& cfg = TFV_CONFIG();
+        m_roadNetwork = new RoadNetwork();
+        const uint64_t seed = cfg.getMasterSeed();
+        const std::string mode = cfg.getString("sim.proc.mode", "city");
+        if(mode == "grid")
+        {
+            m_roadNetwork->generatePerturbedGrid(
+                cfg.getInt("sim.proc.rows", 7), cfg.getInt("sim.proc.cols", 11),
+                cfg.getFloat("sim.proc.spacing_m", 160.0f), cfg.getFloat("sim.proc.jitter_m", 40.0f),
+                cfg.getFloat("sim.proc.keep_prob", 0.8f), seed, cfg.getInt("sim.proc.two_way", 1) != 0,
+                cfg.getFloat("sim.lane_width_m", 3.5f), cfg.getFloat("sim.median_width_m", 3.5f),
+                cfg.getInt("sim.proc.lanes", 1));
+        }
+        else // "city": tensor-field organic generator (the default)
+        {
+            m_roadNetwork->generateCity(
+                cfg.getInt("sim.proc.rows", 7), cfg.getInt("sim.proc.cols", 11),
+                cfg.getFloat("sim.proc.spacing_m", 160.0f), cfg.getFloat("sim.proc.jitter_m", 40.0f),
+                seed, cfg.getFloat("sim.lane_width_m", 3.5f));
+        }
+        auto vehicles = spawnVehiclesProcedural(cfg.getInt("sim.proc.vehicles", 60), seed);
+        if(vehicles.empty())
+        {
+            LOG_ERROR("Procedural generation produced no vehicles");
+            return false;
+        }
+        const bool ok = initialize(std::move(vehicles));
+        if(ok)
+            m_continuousTraffic = true; // arrival re-targeting (gates never reach this path)
+        return ok;
+    }
+
+    bool Simulation::regenerate()
+    {
+        // Rebuild the procedural world from the (possibly UI-edited) config. Runs on the main
+        // thread between frames; initialize(vector) takes the lock itself, so we hold none here.
+        if(TFV_CONFIG().getInt("sim.procedural", 1) == 0)
+            return false;
+        return initializeProceduralWorld();
     }
 
     bool Simulation::initialize(std::vector<Vehicle> vehicles)

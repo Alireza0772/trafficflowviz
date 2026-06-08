@@ -251,11 +251,19 @@ namespace tfv
             if(!shotPath.empty())
             {
                 const int warmup = std::max(1, TFV_CONFIG().getInt("app.screenshot_ticks", 30));
+                // Test hook: exercise the live regenerate path (what the UI button does) headlessly.
+                const bool testRegen = TFV_CONFIG().getInt("app.screenshot_regen", 0) != 0;
                 for(int i = 0; i < warmup; ++i)
                 {
                     handleEvents();
                     update(m_fixedDt);
                     render();
+                    if(testRegen && i == warmup / 2)
+                    {
+                        m_sim.regenerate();
+                        if(m_simulationLayer)
+                            m_simulationLayer->refreshNetwork();
+                    }
                 }
                 const bool ok = exportImage(shotPath);
                 LOG_INFO("[screenshot] wrote {p} (ok={ok})", PARAM(p, shotPath),

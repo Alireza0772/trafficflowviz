@@ -87,6 +87,7 @@ namespace tfv
         void renderMainMenuBar();
         void renderStatusBar();
         void renderKeybindingsWindow();
+        void renderWorldGenWindow(); // live procedural-generation controls (edit + regenerate)
         void renderDockspace();
 
         static void HelpMarker(const char* desc);

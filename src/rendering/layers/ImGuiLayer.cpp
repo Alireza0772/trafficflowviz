@@ -1,9 +1,13 @@
 #include "rendering/layers/ImGuiLayer.hpp"
+#include "core/Configuration.hpp"
+#include "core/Simulation.hpp"
+#include "rendering/layers/SimulationLayer.hpp"
 #include "utils/LoggingManager.hpp"
 #include <imgui.h>
 #include <imgui_impl_sdl2.h>
 #include <imgui_impl_sdlrenderer2.h>
 #include <iostream>
+#include <string>
 
 namespace tfv
 {
@@ -374,6 +378,8 @@ namespace tfv
             }
         }
         ImGui::End();
+
+        renderWorldGenWindow();
     }
 
     void ImGuiLayer::renderKeybindingsWindow()
@@ -402,6 +408,72 @@ namespace tfv
             ImGui::Text("Other Controls:");
             ImGui::BulletText("S - Save screenshot");
             ImGui::BulletText("Esc - Exit application");
+        }
+        ImGui::End();
+    }
+
+    void ImGuiLayer::renderWorldGenWindow()
+    {
+        auto& cfg = TFV_CONFIG();
+        // Editable copies, seeded once from the live config so the panel reflects current values.
+        static bool init = false;
+        static int seed = 12345, rows = 7, cols = 11, hubs = 3, districts = 3, vehicles = 60;
+        static int modeIdx = 0;
+        static float arterial = 320.0f, street = 160.0f;
+        if(!init)
+        {
+            seed = static_cast<int>(cfg.getMasterSeed());
+            rows = cfg.getInt("sim.proc.rows", 7);
+            cols = cfg.getInt("sim.proc.cols", 11);
+            hubs = cfg.getInt("sim.proc.hubs", 3);
+            districts = cfg.getInt("sim.proc.districts", 3);
+            vehicles = cfg.getInt("sim.proc.vehicles", 60);
+            arterial = cfg.getFloat("sim.proc.arterial_spacing_m", 320.0f);
+            street = cfg.getFloat("sim.proc.street_spacing_m", 160.0f);
+            modeIdx = (cfg.getString("sim.proc.mode", "city") == "grid") ? 1 : 0;
+            init = true;
+        }
+
+        ImGui::SetNextWindowSize(ImVec2(330, 360), ImGuiCond_FirstUseEver);
+        if(ImGui::Begin("World Generation"))
+        {
+            const char* modes[] = {"city (tensor field)", "grid"};
+            ImGui::Combo("Mode", &modeIdx, modes, 2);
+            ImGui::InputInt("Seed", &seed);
+            ImGui::SliderInt("Hubs", &hubs, 0, 8);
+            ImGui::SliderInt("Districts", &districts, 1, 6);
+            ImGui::SliderInt("Rows", &rows, 3, 16);
+            ImGui::SliderInt("Cols", &cols, 3, 22);
+            ImGui::SliderFloat("Arterial gap", &arterial, 140.0f, 600.0f, "%.0f m");
+            ImGui::SliderFloat("Street gap", &street, 80.0f, 320.0f, "%.0f m");
+            ImGui::SliderInt("Vehicles", &vehicles, 0, 400);
+            ImGui::Separator();
+
+            auto apply = [&]() {
+                cfg.setValue("sim.master_seed", std::to_string(seed));
+                cfg.setValue("sim.proc.mode", modeIdx == 1 ? "grid" : "city");
+                cfg.setValue("sim.proc.rows", std::to_string(rows));
+                cfg.setValue("sim.proc.cols", std::to_string(cols));
+                cfg.setValue("sim.proc.hubs", std::to_string(hubs));
+                cfg.setValue("sim.proc.districts", std::to_string(districts));
+                cfg.setValue("sim.proc.vehicles", std::to_string(vehicles));
+                cfg.setValue("sim.proc.arterial_spacing_m", std::to_string(static_cast<int>(arterial)));
+                cfg.setValue("sim.proc.street_spacing_m", std::to_string(static_cast<int>(street)));
+                if(m_simulation)
+                    m_simulation->regenerate();
+                if(m_simulationLayer)
+                    m_simulationLayer->refreshNetwork(); // re-point renderer + re-frame camera
+            };
+
+            if(ImGui::Button("Regenerate"))
+                apply();
+            ImGui::SameLine();
+            if(ImGui::Button("New seed"))
+            {
+                seed = static_cast<int>((static_cast<unsigned>(seed) * 1103515245u + 12345u) &
+                                        0x7fffffffu);
+                apply();
+            }
         }
         ImGui::End();
     }

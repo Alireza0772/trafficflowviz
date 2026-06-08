@@ -42,6 +42,15 @@ namespace tfv
         // Get road network for use by other layers
         const RoadNetwork* getRoadNetwork() const { return m_simulation->getRoadNetwork(); }
 
+        // Re-point the renderer at the simulation's (possibly just-regenerated) network and
+        // re-frame the camera. Call after Simulation::regenerate().
+        void refreshNetwork()
+        {
+            if(m_sceneRenderer)
+                m_sceneRenderer->setNetwork(m_simulation->getRoadNetwork());
+            fitToView();
+        }
+
         // Map a logical-point cursor position to world coordinates (inverse of the
         // vehicle render transform). For inspector vehicle picking + the debug overlay.
         glm::vec2 screenToWorld(float logicalX, float logicalY) const;

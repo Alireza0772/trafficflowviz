@@ -457,6 +457,11 @@ namespace tfv
         return getValue(key, defaultValue);
     }
 
+    void Configuration::setValue(const std::string& key, const std::string& value)
+    {
+        m_values[key] = value;
+    }
+
     uint64_t Configuration::getMasterSeed() const
     {
         try

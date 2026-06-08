@@ -61,6 +61,10 @@ namespace tfv
          *  given vehicles (no CSV). Used by tests and headless runs. */
         bool initialize(std::vector<Vehicle> vehicles);
 
+        /** Rebuild the procedural world from the current config (e.g. after the UI edits the
+         *  generation knobs). No-op + false when sim.procedural is off. */
+        bool regenerate();
+
         /** Advance physics by `dt` seconds. */
         void update(double dt);
 
@@ -120,6 +124,10 @@ namespace tfv
       private:
         // attach inputs to the simulation
         void attachInputs();
+
+        // Build a fresh procedural network from config + init the sim on it (shared by the first
+        // path-based initialize and by regenerate()).
+        bool initializeProceduralWorld();
 
         // Update congestion level for a segment
         void updateCongestion(uint32_t segmentId);
