@@ -205,28 +205,23 @@ namespace tfv
                 py = y;
             }
         };
-        const RGB8 pad = brighten(pal.asphalt, 1.35f);
+        (void)brighten;
+        (void)laneWpx;
+        // ONLY roundabouts get a drawn shape (the round island). 3-/4-way junctions are just the
+        // road crossing itself (marked by their signal head) — drawing a disc there made them
+        // look like roundabouts, which they are not.
         for(uint32_t id : m_net->getNodeIds())
         {
             const Node* n = m_net->getNode(id);
-            if(!n || n->junction == JunctionStyle::PLAIN)
+            if(!n || n->junction != JunctionStyle::ROUNDABOUT)
                 continue;
             const int deg = static_cast<int>(std::max(n->incoming.size(), n->outgoing.size()));
             const float cx = n->pos.x * m_scale + static_cast<float>(m_panX);
             const float cy = n->pos.y * m_scale + static_cast<float>(m_panY);
-            if(n->junction == JunctionStyle::ROUNDABOUT)
-            {
-                const float rad = std::max(7.0f, std::min(30.0f, deg * 3.2f)) * m_scale;
-                disc(cx, cy, rad, pal.asphalt);                              // paved annulus base
-                ring(cx, cy, rad, pal.center, std::max(1, static_cast<int>(m_scale))); // lane edge
-                disc(cx, cy, rad * 0.45f, RGB8{58, 102, 66});                  // green center island
-            }
-            else
-            {
-                // 3-/4-way intersection pad: a lighter-asphalt disc; 4-way larger than 3-way.
-                const float k = (n->junction == JunctionStyle::FOUR_WAY) ? 2.4f : 1.9f;
-                disc(cx, cy, k * laneWpx * m_scale, pad);
-            }
+            const float rad = std::max(7.0f, std::min(30.0f, deg * 3.2f)) * m_scale;
+            disc(cx, cy, rad, pal.asphalt);                                  // paved annulus base
+            ring(cx, cy, rad, pal.center, std::max(1, static_cast<int>(m_scale))); // outer lane edge
+            disc(cx, cy, rad * 0.45f, RGB8{58, 102, 66});                    // green centre island
         }
     }
 
