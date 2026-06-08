@@ -634,6 +634,127 @@ namespace tfv
         return true;
     }
 
+    void RoadNetwork::setLaneTurns(uint32_t segId, uint8_t laneIndex, uint8_t allowedTurns)
+    {
+        RoadSegment* s = getSegment(segId);
+        if(!s)
+            return;
+        const int n = std::max(1, s->lanes);
+        if(static_cast<int>(laneIndex) >= n)
+            return; // out-of-range lane: ignore (never grow past the segment's lane count)
+        if(static_cast<int>(s->laneDefs.size()) < n)
+        {
+            // Materialize the implicit all-permissive lanes before restricting one of them,
+            // so an unauthored lane keeps its 0x0F default.
+            const std::size_t old = s->laneDefs.size();
+            s->laneDefs.resize(static_cast<std::size_t>(n));
+            for(std::size_t i = old; i < s->laneDefs.size(); ++i)
+            {
+                s->laneDefs[i].index = static_cast<uint8_t>(i);
+                s->laneDefs[i].allowedTurns = 0x0F;
+            }
+        }
+        s->laneDefs[laneIndex].allowedTurns = allowedTurns;
+    }
+
+    bool RoadNetwork::loadLanesCSV(const std::filesystem::path& path)
+    {
+        std::ifstream file(path);
+        if(!file.is_open())
+            return false; // lane turns are optional: missing file is a no-op
+        // Parse a turns cell as either a bitmask integer (e.g. "5") or a string of
+        // S/L/R/U characters (e.g. "SR", "S|L"). Empty / unrecognized => all-permissive.
+        auto parseTurns = [](std::string s) -> uint8_t {
+            std::size_t b = 0;
+            while(b < s.size() && (s[b] == ' ' || s[b] == '\t'))
+                ++b;
+            s = s.substr(b);
+            while(!s.empty() && (s.back() == '\r' || s.back() == ' ' || s.back() == '\t'))
+                s.pop_back();
+            if(s.empty())
+                return 0x0F;
+            bool allDigits = true;
+            for(char c : s)
+                if(!std::isdigit(static_cast<unsigned char>(c)))
+                {
+                    allDigits = false;
+                    break;
+                }
+            if(allDigits)
+            {
+                try
+                {
+                    return static_cast<uint8_t>(std::stoul(s) & 0x0F);
+                }
+                catch(...)
+                {
+                    return 0x0F;
+                }
+            }
+            uint8_t mask = 0;
+            for(char c : s)
+            {
+                switch(::toupper(static_cast<unsigned char>(c)))
+                {
+                case 'S':
+                    mask |= turnBit(TurnType::STRAIGHT);
+                    break;
+                case 'L':
+                    mask |= turnBit(TurnType::LEFT);
+                    break;
+                case 'R':
+                    mask |= turnBit(TurnType::RIGHT);
+                    break;
+                case 'U':
+                    mask |= turnBit(TurnType::U);
+                    break;
+                default:
+                    break; // skip separators ('|', '+', spaces, ...)
+                }
+            }
+            return mask ? mask : 0x0F;
+        };
+        std::string line;
+        std::getline(file, line); // header
+        int loaded = 0;
+        while(std::getline(file, line))
+        {
+            if(line.empty())
+                continue;
+            std::stringstream ss(line);
+            std::string segS, laneS, turnsS;
+            if(!std::getline(ss, segS, ','))
+                continue;
+            std::getline(ss, laneS, ',');
+            std::getline(ss, turnsS, ',');
+            try
+            {
+                const uint32_t segId = static_cast<uint32_t>(std::stoul(segS));
+                const long laneIdx = std::stol(laneS); // long: an out-of-range index can't wrap
+                const RoadSegment* s = getSegment(segId);
+                if(!s)
+                    continue; // dangling segment id
+                // Reject (don't silently wrap into a valid lane via the uint8_t cast, and don't
+                // count) any lane index outside the segment's real lane range.
+                if(laneIdx < 0 || laneIdx >= std::max(1, s->lanes))
+                {
+                    LOG_ERROR("[Road] lanes.csv: lane {lane} out of range for segment {seg}",
+                              PARAM(lane, laneIdx), PARAM(seg, segId));
+                    continue;
+                }
+                setLaneTurns(segId, static_cast<uint8_t>(laneIdx), parseTurns(turnsS));
+                ++loaded;
+            }
+            catch(const std::exception&)
+            {
+                // skip malformed row
+            }
+        }
+        LOG_INFO("loaded {count} lane-turn rows from {file}", PARAM(count, loaded),
+                 PARAM(file, path.string()));
+        return true;
+    }
+
 } // namespace tfv
 
 // Hash function for pair

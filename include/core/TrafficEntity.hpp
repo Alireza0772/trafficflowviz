@@ -117,6 +117,17 @@ namespace tfv
         // Phase 6: lane-change render smoothing (cosmetic; never fed back into the sim)
         uint8_t prevLaneIndex{0};        // lane before the most recent change
         uint64_t laneChangeTick{0};      // tick of the most recent lane change
+
+        // Phase C1c: turn-lane targeting (recomputed each tick by computeApproachIntent,
+        // reset at hand-off). The sentinels mean "no turn-lane constraint active": a vehicle
+        // only acquires non-sentinel values when it nears a node whose approach segment has
+        // turn-restricted lanes (a lanes.csv authored allowedTurns != 0x0F). NEITHER field is
+        // hashed by the golden digests, and both stay at their sentinels for every legacy net,
+        // so the pinned trajectories cannot move.
+        uint8_t intendedTurn{0xFF};       // turnBit() of the upcoming turn (0xFF = none computed)
+        int16_t targetLaneOnApproach{-1}; // lane the vehicle must reach to make it (-1 = none).
+                                          // int16_t spans the full uint8_t laneIndex range, so a
+                                          // valid target can never truncate into the -1 sentinel.
     };
 
     // Road segment (edge in the road network)

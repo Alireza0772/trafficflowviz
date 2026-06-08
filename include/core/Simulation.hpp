@@ -140,6 +140,13 @@ namespace tfv
         // without advancing routeIdx), for cross-segment leader lookahead.
         uint32_t nextSegmentForLookahead(const Vehicle& v, const RoadSegment& seg) const;
 
+        // Turn-lane targeting (Phase C1c). Recompute, from frame-N state, the vehicle's
+        // intended turn at the node it is approaching and the lane it must reach to make it.
+        // Writes only v.intendedTurn / v.targetLaneOnApproach (neither hashed); does not touch
+        // simulation state. A no-op (both reset to their sentinels) unless the approach segment
+        // has a turn-restricted lane, so legacy nets stay byte-identical.
+        void computeApproachIntent(Vehicle& v) const;
+
         // Nearest STOP/YIELD sign ahead of the vehicle on its current segment (null if none).
         const Sign* nearestStopAhead(const Vehicle& v) const;
 

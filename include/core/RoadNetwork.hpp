@@ -97,6 +97,15 @@ namespace tfv
         /** Turn category from segment geometry (cross/dot of unit dirs). */
         TurnType turnTypeFor(uint32_t inSeg, uint32_t outSeg) const;
 
+        // --- Per-lane permitted turns (Phase C1c). A segment with NO authored lane turns
+        //     leaves every lane permissive (allowedTurns 0x0F), so turn-lane targeting is a
+        //     no-op and existing nets stay byte-identical. `allowedTurns` is a bitmask over
+        //     {straight,left,right,u} (see turnBit()).
+        void setLaneTurns(uint32_t segId, uint8_t laneIndex, uint8_t allowedTurns);
+        /** Optional sidecar (segId,lane,turns); turns is a mask int or S/L/R/U chars.
+         *  Missing file is a no-op (false). */
+        bool loadLanesCSV(const std::filesystem::path& path);
+
         /** Create signalized intersections at every node with >= minApproaches
          *  incoming segments (Phase 4). Idempotent (rebuilds from scratch). */
         void buildIntersections(int minApproaches = 2);

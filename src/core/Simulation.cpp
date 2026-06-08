@@ -44,6 +44,17 @@ namespace tfv
             m_roadNetwork->loadSignsCSV(signsPath);
         }
 
+        // Optional Phase C sidecars: permitted movements (C1a/b) + per-lane turns (C1c).
+        // Each is a no-op when its file is absent, so a network without them is unchanged.
+        {
+            auto& cfg = TFV_CONFIG();
+            m_roadNetwork->loadMovementsCSV(cfg.getDataDirectory() /
+                                            cfg.getString("data.movements_file",
+                                                          "roads/movements.csv"));
+            m_roadNetwork->loadLanesCSV(cfg.getDataDirectory() /
+                                        cfg.getString("data.lanes_file", "roads/lanes.csv"));
+        }
+
         auto vehicles = tfv::loadVehiclesCSV(vehicleInformationPath);
         if(vehicles.empty())
         {
@@ -383,6 +394,29 @@ namespace tfv
                 auto cd = m_laneChangeCooldown.find(self.id);
                 if(cd != m_laneChangeCooldown.end() && m_tick < cd->second)
                     continue; // cooling down from a recent change
+
+                // Turn-lane targeting (Phase C1c): when the vehicle must reach a specific lane
+                // to make its upcoming turn, force one step toward it and skip the normal
+                // speed-incentive MOBIL — even inside the approach window. This is the ONLY
+                // relaxation of the no-change-near-a-node guard below. Legacy nets never set
+                // targetLaneOnApproach (no turn-restricted lanes), so neither this branch nor
+                // the relaxation ever fires and MOBIL stays byte-identical. The Phase-B0 commit
+                // still gap-checks the move, so if the turn lane is occupied the vehicle simply
+                // holds in place and retries on the next tick.
+                if(self.targetLaneOnApproach >= 0)
+                {
+                    const int cur = static_cast<int>(self.laneIndex);
+                    if(self.targetLaneOnApproach != cur)
+                    {
+                        const int dir = (self.targetLaneOnApproach > cur) ? 1 : -1;
+                        desiredLaneChange[si] = dir;
+                        auto la = m_lastAction.find(self.id);
+                        if(la != m_lastAction.end())
+                            la->second.laneChange = static_cast<int8_t>(dir); // future-brain seam
+                    }
+                    continue; // turn-lane intent overrides + suppresses normal MOBIL near the node
+                }
+
                 if((1.0f - self.position) * seg->length <= m_perceptionParams.rangeFront)
                     continue; // never change lanes while approaching a node/sign/light
 
@@ -515,6 +549,75 @@ namespace tfv
             return outId;
         }
         return UINT32_MAX; // only a U-turn / illegal movement available => no downstream lookahead
+    }
+
+    void Simulation::computeApproachIntent(Vehicle& v) const
+    {
+        // Fresh each tick; the sentinels mean "no turn-lane constraint" (legacy default).
+        v.intendedTurn = 0xFF;
+        v.targetLaneOnApproach = -1;
+        if(!m_roadNetwork)
+            return;
+        const RoadSegment* seg = m_roadNetwork->getSegment(v.segmentId);
+        if(!seg)
+            return;
+        const int laneCount = std::max(1, seg->lanes);
+        if(laneCount < 2)
+            return; // single-lane: nowhere to migrate (load-bearing for the digest freeze)
+
+        // Only meaningful when a lanes.csv restricted some lane's turns. With every lane at the
+        // all-permissive 0x0F default (the legacy state of every pinned net), every lane can
+        // make every turn, so there is nothing to target -> early out, byte-identical.
+        bool restricted = false;
+        for(const Lane& ln : seg->laneDefs)
+            if(ln.allowedTurns != 0x0F)
+            {
+                restricted = true;
+                break;
+            }
+        if(!restricted)
+            return;
+
+        // Approaching the node? (same window the cross-segment lookahead + MOBIL guard use.)
+        if((1.0f - v.position) * seg->length > m_perceptionParams.rangeFront)
+            return;
+
+        const uint32_t nextId = nextSegmentForLookahead(v, *seg);
+        if(nextId == UINT32_MAX)
+            return;
+        const uint8_t need = turnBit(m_roadNetwork->turnTypeFor(seg->id, nextId));
+        v.intendedTurn = need;
+
+        // A lane allows the turn if its authored mask includes it; lanes beyond the authored
+        // laneDefs are treated as permissive (mirrors setLaneTurns materializing on demand).
+        auto allows = [&](int L) -> bool {
+            if(L < 0 || L >= laneCount)
+                return false;
+            if(L < static_cast<int>(seg->laneDefs.size()))
+                return (seg->laneDefs[static_cast<std::size_t>(L)].allowedTurns & need) != 0;
+            return true;
+        };
+        if(allows(static_cast<int>(v.laneIndex)))
+            return; // already in a lane that can make the turn -> no forced move
+
+        // Nearest lane (by index distance) that permits the turn; ties resolve to the lower
+        // index (keep-right), so the target is deterministic.
+        int best = -1, bestDist = laneCount + 1;
+        for(int L = 0; L < laneCount; ++L)
+            if(allows(L))
+            {
+                const int d = std::abs(L - static_cast<int>(v.laneIndex));
+                if(d < bestDist)
+                {
+                    bestDist = d;
+                    best = L;
+                }
+            }
+        // best == -1 means NO lane permits the turn (a mis-authored lanes.csv). Turn-lane
+        // targeting is advisory, not a hard gate (movement *legality* is the node-level
+        // movement table's job, C1a/b) — so we leave the sentinel and let the vehicle proceed
+        // on its routed branch rather than strand it. A future stricter mode could reject here.
+        v.targetLaneOnApproach = static_cast<int16_t>(best);
     }
 
     glm::vec2 Simulation::segWorldPos(const RoadSegment& seg, float position, uint8_t laneIndex) const
@@ -724,6 +827,15 @@ namespace tfv
                         m_violations[vehs[i].id] += nv;
                 }
             }
+
+            // (2a') Turn-lane targeting (Phase C1c): set each vehicle's intended turn + the
+            //       lane it must reach to make it, from frozen frame-N state. Writes only the
+            //       two non-hashed approach-intent fields; a no-op unless a lanes.csv restricts
+            //       a lane's turns, so every pinned net stays byte-identical. Runs for all
+            //       vehicles (incl. brain-driven ones) so the fields are consistent everywhere;
+            //       only the rule-path MOBIL below acts on targetLaneOnApproach.
+            for(auto& v : vehs)
+                computeApproachIntent(v);
 
             // (2b) Source the desired lane change: a brain that drives lane changes
             //      provides its (validated) Action.laneChange; otherwise the built-in
@@ -936,6 +1048,10 @@ namespace tfv
                             v.prevLaneIndex = v.laneIndex;
                             v.segmentId = nextSegmentId;
                             v.position -= 1.f;          // carry over the overshoot
+                            // Turn-lane intent belongs to the segment just left; clear it so a
+                            // stale target can't leak onto the new segment (recomputed next tick).
+                            v.intendedTurn = 0xFF;
+                            v.targetLaneOnApproach = -1;
                             m_signCleared.erase(v.id);  // re-evaluate signs on the new segment
                             m_forceDecide.insert(v.id); // re-decide for the new segment's v0
                         }

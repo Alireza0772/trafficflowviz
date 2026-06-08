@@ -11,3 +11,6 @@ xcuserdata/
 fix_includes.sh
 update_includes.sh
 imgui.ini
+.vscode
+.claude
+build-py

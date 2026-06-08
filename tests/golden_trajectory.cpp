@@ -44,6 +44,7 @@ static constexpr uint64_t kGoldenTwoWay = 0xf92e9fb995110cc1ULL;   // Gate 16 tw
 static constexpr uint64_t kGoldenVtable = 0x626e52c4a6c7691bULL;   // Gate 11 vtable adapter
 static constexpr uint64_t kGoldenTrajectoryCsv = 0x6498c43e5c3ee49cULL; // Gate 12 export CSV
 static constexpr uint64_t kGoldenCrossLane = 0xf61e1bbd64720560ULL; // Gate 14 lane-aware cross-seg
+static constexpr uint64_t kGoldenTurnMovements = 0x9a6668f592687ec9ULL; // Gate 18 turn-lane targeting
 
 namespace
 {
@@ -989,6 +990,115 @@ static uint32_t movementLegalityRun()
     return sim.snapshot().at(1).segmentId; // expect 30 (legal straight), never 20
 }
 
+// Gate 18: turn-lane targeting (Phase C1c). A 2-lane approach seg10 (A->J) feeds a LEFT
+// branch (seg20, J->L) and a STRAIGHT branch (seg30, J->R). A lanes.csv restricts the turns:
+// lane 0 (right) = straight|right, lane 1 (left) = straight|left. A lone vehicle starts in
+// lane 0 but is routed LEFT (seg20) — a turn its lane forbids. It must migrate to lane 1
+// (against the keep-right MOBIL bias, and within the no-change-near-a-node window) before
+// turning. A CONTROL run with NO turn-restricted lanes must NOT migrate (proves the lane
+// change is caused by turn-lane targeting, not stray MOBIL).
+struct TurnLaneResult
+{
+    uint64_t digest{0};
+    bool reachedTurnLane{false};  // entered lane 1 on seg10 while approaching the node
+    bool tookLeft{false};         // ended on the LEFT branch (seg20)
+    bool controlMigrated{false};  // without turn lanes: did it ever enter lane 1 (must be false)
+};
+static TurnLaneResult turnLaneRun()
+{
+    auto run = [](bool withTurnLanes) -> std::pair<bool, VehicleMap> {
+        RoadNetwork net;
+        auto addNode = [&](uint32_t id, float x, float y) {
+            Node n;
+            n.id = id;
+            n.pos = {x, y};
+            net.addNode(n);
+        };
+        addNode(1, 0, 0);     // A
+        addNode(2, 100, 0);   // J (the turn node)
+        addNode(3, 100, 200); // L (left branch endpoint)
+        addNode(4, 300, 0);   // R (straight branch endpoint)
+        auto seg = [&](uint32_t id, uint32_t from, uint32_t to, glm::vec2 p0, glm::vec2 p1,
+                       int lanes) {
+            RoadSegment s{};
+            s.id = id;
+            s.fromNode = from;
+            s.toNode = to;
+            s.dir = glm::normalize(p1 - p0);
+            s.length = glm::length(p1 - p0);
+            s.lanes = lanes;
+            s.speedLimit = 13.9f;
+            net.addSegment(s);
+        };
+        seg(10, 1, 2, {0, 0}, {100, 0}, 2);     // A->J approach, 2 lanes (+x)
+        seg(20, 2, 3, {100, 0}, {100, 200}, 1); // J->L LEFT branch (+y)
+        seg(30, 2, 4, {100, 0}, {300, 0}, 1);   // J->R STRAIGHT branch (+x)
+        if(withTurnLanes)
+        {
+            // lane 0 (right): straight+right only; lane 1 (left): straight+left only.
+            net.setLaneTurns(10, 0, turnBit(TurnType::STRAIGHT) | turnBit(TurnType::RIGHT));
+            net.setLaneTurns(10, 1, turnBit(TurnType::STRAIGHT) | turnBit(TurnType::LEFT));
+        }
+
+        Simulation sim(&net);
+        std::vector<Vehicle> v(1);
+        v[0].id = 1;
+        v[0].segmentId = 10;
+        v[0].position = 0.10f;
+        v[0].laneIndex = 0;  // starts in the RIGHT lane (cannot turn left from here)
+        v[0].vel = {10.0f, 0.0f};
+        v[0].route = {20}; // routed onto the LEFT branch
+        v[0].routeIdx = 0;
+        sim.initialize(std::move(v));
+
+        bool enteredLane1 = false;
+        VehicleMap snap;
+        for(int t = 0; t < 600; ++t)
+        {
+            sim.update(0.02);
+            snap = sim.snapshot();
+            const Vehicle& e = snap.at(1);
+            if(e.segmentId == 10 && e.laneIndex == 1 && (1.0f - e.position) * 100.0f <= 60.0f)
+                enteredLane1 = true; // in the left turn lane during the approach
+        }
+        return {enteredLane1, snap};
+    };
+
+    TurnLaneResult r;
+    auto [migrated, snap] = run(true);
+    r.reachedTurnLane = migrated;
+    r.tookLeft = (snap.at(1).segmentId == 20);
+
+    auto [ctrlMigrated, ctrlSnap] = run(false);
+    (void)ctrlSnap;
+    r.controlMigrated = ctrlMigrated;
+
+    std::vector<uint64_t> ids;
+    for(const auto& [id, v] : snap)
+    {
+        (void)v;
+        ids.push_back(id);
+    }
+    std::sort(ids.begin(), ids.end());
+    uint64_t h = 1469598103934665603ULL;
+    auto mix = [&](uint64_t x) {
+        h ^= x;
+        h *= 1099511628211ULL;
+    };
+    for(uint64_t id : ids)
+    {
+        const Vehicle& v = snap.at(id);
+        const float sp = glm::length(v.vel);
+        mix(id);
+        mix(v.segmentId);
+        mix(static_cast<uint64_t>(v.laneIndex));
+        mix(static_cast<uint64_t>(static_cast<int64_t>(std::llround(v.position * 1e6))));
+        mix(static_cast<uint64_t>(static_cast<int64_t>(std::llround(sp * 1e3))));
+    }
+    r.digest = h;
+    return r;
+}
+
 int main(int argc, char** argv)
 {
     bool printOnly = (argc > 1 && std::strcmp(argv[1], "--print-hash") == 0);
@@ -1057,6 +1167,11 @@ int main(int argc, char** argv)
     const uint32_t moveEndSeg = movementLegalityRun();
     std::printf("movement-legality: routed-illegal-left ended on seg %u (legal straight=30)\n",
                 moveEndSeg);
+
+    TurnLaneResult tl = turnLaneRun();
+    std::printf("turn-lane digest = 0x%016llx (reachedTurnLane=%d tookLeft=%d controlMigrated=%d)\n",
+                (unsigned long long)tl.digest, tl.reachedTurnLane ? 1 : 0, tl.tookLeft ? 1 : 0,
+                tl.controlMigrated ? 1 : 0);
 
     if(printOnly)
         return 0;
@@ -1345,8 +1460,40 @@ int main(int argc, char** argv)
             ++failures;
         }
     }
+    { // Gate 18: turn-lane targeting migrates a wrong-lane vehicle into its turn lane
+        TurnLaneResult tl2 = turnLaneRun();
+        if(tl.digest != tl2.digest)
+        {
+            std::printf("FAIL: turn-lane scenario non-deterministic\n");
+            ++failures;
+        }
+        if(!tl.reachedTurnLane)
+        {
+            std::printf("FAIL: vehicle never migrated into the left turn lane (lane 1) on approach\n");
+            ++failures;
+        }
+        if(!tl.tookLeft)
+        {
+            std::printf("FAIL: vehicle did not take the routed left branch (seg 20)\n");
+            ++failures;
+        }
+        if(tl.controlMigrated)
+        {
+            std::printf("FAIL: control (no turn lanes) migrated — lane change not caused by "
+                        "turn-lane targeting\n");
+            ++failures;
+        }
+        if(kGoldenTurnMovements != 0ULL && tl.digest != kGoldenTurnMovements)
+        {
+            std::printf("FAIL: turn-lane digest 0x%016llx != golden 0x%016llx\n",
+                        (unsigned long long)tl.digest, (unsigned long long)kGoldenTurnMovements);
+            ++failures;
+        }
+        if(kGoldenTurnMovements == 0ULL)
+            std::printf("NOTE: turn-lane digest not pinned (kGoldenTurnMovements==0); skipping.\n");
+    }
 
     if(failures == 0)
-        std::printf("PASS: golden_trajectory (17 gates)\n");
+        std::printf("PASS: golden_trajectory (18 gates)\n");
     return failures == 0 ? 0 : 1;
 }
