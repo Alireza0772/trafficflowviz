@@ -956,6 +956,122 @@ namespace tfv
         return m_segments.size();
     }
 
+    std::size_t RoadNetwork::loadNetwork(const std::filesystem::path& path, float laneWidth,
+                                         uint64_t seed)
+    {
+        std::ifstream in(path);
+        if(!in)
+        {
+            LOG_ERROR("loadNetwork: cannot open {p}", PARAM(p, path.string()));
+            return 0;
+        }
+        auto parseClass = [](const std::string& s) -> RoadClass {
+            if(s == "HIGHWAY")
+                return RoadClass::HIGHWAY;
+            if(s == "ARTERIAL")
+                return RoadClass::ARTERIAL;
+            if(s == "COLLECTOR")
+                return RoadClass::COLLECTOR;
+            return RoadClass::LOCAL; // default + explicit LOCAL
+        };
+
+        std::vector<std::pair<uint32_t, RoadClass>> twoWay; // forward ids to expand after loading
+        uint32_t segId = 0;
+        std::size_t nodeCount = 0, edgeCount = 0;
+        std::string line;
+        while(std::getline(in, line))
+        {
+            if(const auto hash = line.find('#'); hash != std::string::npos)
+                line.erase(hash); // strip trailing comment
+            std::istringstream ss(line);
+            std::string tag;
+            if(!(ss >> tag))
+                continue; // blank line
+            if(tag == "NODE")
+            {
+                uint32_t id;
+                float x, y;
+                if(!(ss >> id >> x >> y))
+                    continue;
+                Node n;
+                n.id = id;
+                n.pos = glm::vec2(x, y);
+                addNode(n);
+                ++nodeCount;
+            }
+            else if(tag == "EDGE")
+            {
+                uint32_t from, to;
+                std::string cls;
+                int lanes = 1, oneway = 1;
+                if(!(ss >> from >> to >> cls >> lanes >> oneway))
+                    continue;
+                if(from == to)
+                    continue;
+                const Node* na = getNode(from);
+                const Node* nb = getNode(to);
+                if(!na || !nb)
+                    continue; // dangling edge — skip (keeps the graph well-formed)
+                const RoadClass rc = parseClass(cls);
+                // Optional cleaned/straightened geometry polyline: whitespace-separated "x,y".
+                std::vector<glm::vec2> cl;
+                std::string tok;
+                while(ss >> tok)
+                {
+                    const auto comma = tok.find(',');
+                    if(comma == std::string::npos)
+                        continue;
+                    try
+                    {
+                        cl.emplace_back(std::stof(tok.substr(0, comma)),
+                                        std::stof(tok.substr(comma + 1)));
+                    }
+                    catch(...)
+                    {
+                    }
+                }
+                RoadSegment s{};
+                s.id = segId;
+                s.fromNode = from;
+                s.toNode = to;
+                const glm::vec2 chord = nb->pos - na->pos;
+                const float chordLen = glm::length(chord);
+                s.dir = (chordLen > 1e-3f) ? chord / chordLen : glm::vec2(1.0f, 0.0f);
+                float len = chordLen;
+                if(cl.size() >= 2)
+                {
+                    len = 0.0f;
+                    for(std::size_t k = 1; k < cl.size(); ++k)
+                        len += glm::length(cl[k] - cl[k - 1]);
+                }
+                s.length = std::max(1e-3f, len);
+                s.lanes = std::max(1, lanes);
+                s.speedLimit = classSpec(rc).speed;
+                s.roadClass = rc;
+                s.oneway = true;             // makeTwoWay flips this for two-way edges below
+                if(cl.size() > 2)            // >2 pts => genuinely curved; <=2 => straight chord
+                    s.setCenterline(cl);
+                addSegment(s);
+                if(oneway == 0)
+                    twoWay.emplace_back(segId, rc);
+                ++segId;
+                ++edgeCount;
+            }
+        }
+        if(edgeCount == 0)
+        {
+            LOG_ERROR("loadNetwork: parsed no edges from {p}", PARAM(p, path.string()));
+            return 0;
+        }
+        for(const auto& [fid, cls] : twoWay) // paired reverse + median offset, like generateCity
+            makeTwoWay(fid, laneWidth, classSpec(cls).medianWidth);
+        classifyJunctions(seed); // tag 3-/4-way / roundabout from node degree (rendering only)
+        LOG_INFO("loaded network {p}: {nn} nodes, {ne} edges -> {ns} directed segments",
+                 PARAM(p, path.string()), PARAM(nn, nodeCount), PARAM(ne, edgeCount),
+                 PARAM(ns, m_segments.size()));
+        return m_segments.size();
+    }
+
     void RoadNetwork::buildRoundabouts(float laneWidth)
     {
         // Snapshot roundabout centre ids first (we add nodes/segments below).

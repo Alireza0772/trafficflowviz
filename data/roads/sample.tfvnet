@@ -1,0 +1,32 @@
+# sample.tfvnet — hand-made clean test network for the import path.
+# Coords in meters, SDL y-down. 3x3 grid (160 m spacing) centred on origin.
+# Format:  NODE <id> <x> <y>   |   EDGE <from> <to> <class> <lanes> <oneway> [x0,y0 x1,y1 ...]
+NODE 0 -160 -160
+NODE 1   0  -160
+NODE 2  160 -160
+NODE 3 -160    0
+NODE 4   0     0
+NODE 5  160    0
+NODE 6 -160  160
+NODE 7   0   160
+NODE 8  160  160
+
+# Central cross — ARTERIAL, two-way (node 4 has degree 4 -> FOUR_WAY junction)
+EDGE 3 4 ARTERIAL 2 0
+EDGE 4 5 ARTERIAL 2 0
+EDGE 1 4 ARTERIAL 2 0
+EDGE 4 7 ARTERIAL 2 0
+
+# Outer streets — LOCAL, two-way
+EDGE 0 1 LOCAL 1 0
+EDGE 1 2 LOCAL 1 0
+EDGE 7 8 LOCAL 1 0
+EDGE 0 3 LOCAL 1 0
+EDGE 3 6 LOCAL 1 0
+EDGE 5 8 LOCAL 1 0
+
+# A curved COLLECTOR (explicit bowed geometry) to exercise centerline import
+EDGE 6 7 COLLECTOR 1 0 -160,160 -120,120 -40,128 0,160
+
+# A ONE-WAY local link (2 -> 5 only) to exercise one-way import (chevrons, no median)
+EDGE 2 5 LOCAL 1 1

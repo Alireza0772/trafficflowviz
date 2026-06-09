@@ -150,6 +150,15 @@ namespace tfv
          *  Missing file is a no-op (false). */
         bool loadLanesCSV(const std::filesystem::path& path);
 
+        /** Load a pre-cleaned network from a `.tfvnet` text file (produced offline by
+         *  tools/osm_to_tfvnet.py: OSM/TIGER import -> OSMnx simplify+consolidate -> our schema).
+         *  Format (meters, SDL y-down, '#' comments):
+         *    NODE <id> <x> <y>
+         *    EDGE <from> <to> <LOCAL|COLLECTOR|ARTERIAL|HIGHWAY> <lanes> <oneway:0|1> [x0,y0 x1,y1 ...]
+         *  Two-way edges (oneway=0) are expanded via makeTwoWay (paired reverse + median); junction
+         *  styles are tagged by degree. Returns the directed-segment count (0 = failure/empty). */
+        std::size_t loadNetwork(const std::filesystem::path& path, float laneWidth, uint64_t seed);
+
         /** Create signalized intersections at every node with >= minApproaches
          *  incoming segments (Phase 4). Idempotent (rebuilds from scratch). */
         void buildIntersections(int minApproaches = 2);

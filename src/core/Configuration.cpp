@@ -116,7 +116,8 @@ namespace tfv
         // Procedural world generation (default ON). Set sim.procedural=0 to load the CSVs
         // (data.city_file + data.vehicles_file) instead. Fully deterministic for the seed above.
         m_values["sim.procedural"] = "1";
-        m_values["sim.proc.mode"] = "city";     // "city" = tensor-field organic, "grid"/"wfc" = others
+        m_values["sim.proc.mode"] = "city";     // "city" = tensor-field organic, "grid", "import"
+        m_values["sim.import.path"] = "";       // mode=import: path to a .tfvnet (osm_to_tfvnet.py)
         m_values["sim.proc.rows"] = "7";        // domain height in blocks
         m_values["sim.proc.cols"] = "11";       // domain width in blocks
         m_values["sim.proc.spacing_m"] = "160"; // block size (px == m here)

@@ -88,7 +88,27 @@ namespace tfv
         m_roadNetwork = new RoadNetwork();
         const uint64_t seed = cfg.getMasterSeed();
         const std::string mode = cfg.getString("sim.proc.mode", "city");
-        if(mode == "grid")
+        if(mode == "import")
+        {
+            // Pre-cleaned real-world network (OSM/TIGER -> OSMnx simplify+consolidate ->
+            // tools/osm_to_tfvnet.py). Falls through to tensor-field 'city' if it fails/empty.
+            const std::string path = cfg.getString("sim.import.path", "");
+            const std::size_t n = path.empty()
+                ? 0
+                : m_roadNetwork->loadNetwork(path, cfg.getFloat("sim.lane_width_m", 3.5f), seed);
+            if(n == 0)
+            {
+                LOG_WARN("sim.proc.mode=import but sim.import.path '{p}' yielded no network; "
+                         "falling back to tensor-field city",
+                         PARAM(p, path));
+                m_roadNetwork->generateCity(
+                    cfg.getInt("sim.proc.rows", 7), cfg.getInt("sim.proc.cols", 11),
+                    cfg.getFloat("sim.proc.spacing_m", 160.0f),
+                    cfg.getFloat("sim.proc.jitter_m", 40.0f), seed,
+                    cfg.getFloat("sim.lane_width_m", 3.5f));
+            }
+        }
+        else if(mode == "grid")
         {
             m_roadNetwork->generatePerturbedGrid(
                 cfg.getInt("sim.proc.rows", 7), cfg.getInt("sim.proc.cols", 11),
