@@ -54,8 +54,6 @@ namespace tfv
         SDL_MetalView sdlView = 0;
         id<MTLRenderPipelineState> pipeline = nil;
         id<MTLTexture> msaa = nil; // multisample color target (resolved to the drawable)
-        id<MTLBuffer> vbuf = nil;  // reused vertex buffer (grows as needed)
-        NSUInteger vbufCap = 0;
         int msaaW = 0, msaaH = 0;
         int sampleCount = 4;
         double clearColor[4] = {0, 0, 0, 1};
@@ -284,7 +282,7 @@ namespace tfv
     void MetalRenderer::present()
     {
         auto* R = static_cast<MetalResources*>(m_res);
-        if(!R || !R->layer)
+        if(!R || !R->layer || !R->device || !R->queue || !R->pipeline)
             return;
         @autoreleasepool
         {
@@ -329,26 +327,41 @@ namespace tfv
             }
 
             id<MTLCommandBuffer> cb = [R->queue commandBuffer];
+            if(!cb)
+                return;
             id<MTLRenderCommandEncoder> enc = [cb renderCommandEncoderWithDescriptor:rp];
+            if(!enc)
+            {
+                [cb commit]; // nothing encoded; still flush so the drawable isn't leaked
+                return;
+            }
             if(!R->batch.empty())
             {
-                [enc setRenderPipelineState:R->pipeline];
                 const NSUInteger bytes = R->batch.size() * sizeof(MVertex);
-                if(!R->vbuf || R->vbufCap < bytes)
+                // Fresh per-frame buffer: never written while a prior frame's GPU read is in
+                // flight (the command buffer retains it until completion). Metal pools these.
+                id<MTLBuffer> vbuf = [R->device newBufferWithLength:bytes
+                                                            options:MTLResourceStorageModeShared];
+                if(vbuf)
                 {
-                    R->vbuf = [R->device newBufferWithLength:bytes
-                                                     options:MTLResourceStorageModeShared];
-                    R->vbufCap = bytes;
+                    std::memcpy([vbuf contents], R->batch.data(), bytes);
+                    [enc setRenderPipelineState:R->pipeline];
+                    [enc setVertexBuffer:vbuf offset:0 atIndex:0];
+                    float vp[2] = {static_cast<float>(dw), static_cast<float>(dh)};
+                    [enc setVertexBytes:vp length:sizeof(vp) atIndex:1];
+                    [enc drawPrimitives:MTLPrimitiveTypeTriangle
+                            vertexStart:0
+                            vertexCount:R->batch.size()];
                 }
-                std::memcpy([R->vbuf contents], R->batch.data(), bytes);
-                [enc setVertexBuffer:R->vbuf offset:0 atIndex:0];
-                float vp[2] = {static_cast<float>(dw), static_cast<float>(dh)};
-                [enc setVertexBytes:vp length:sizeof(vp) atIndex:1];
-                [enc drawPrimitives:MTLPrimitiveTypeTriangle
-                        vertexStart:0
-                        vertexCount:R->batch.size()];
             }
             [enc endEncoding];
+            // Surface GPU-side errors (helps diagnose the sandbox's intermittent GPU faults).
+            [cb addCompletedHandler:^(id<MTLCommandBuffer> done) {
+                if(done.status == MTLCommandBufferStatusError)
+                    std::cerr << "[Metal] command buffer error: "
+                              << (done.error ? done.error.localizedDescription.UTF8String : "?")
+                              << "\n";
+            }];
             [cb presentDrawable:drawable];
             [cb commit];
             R->batch.clear();

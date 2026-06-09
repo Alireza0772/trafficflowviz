@@ -224,6 +224,16 @@ namespace tfv
             m_layerStack.pushLayer(m_imguiLayer);
             m_imguiLayer->setEnabled(m_imguiEnabled);
         }
+        else
+        {
+            // ImGui currently rides on the SDL_Renderer backend (imgui_impl_sdlrenderer2). The
+            // Metal backend's ImGui port is Phase 2 — until then, selecting Metal renders the
+            // scene (with MSAA) but no UI panels. Make that explicit rather than silent.
+            LOG_WARN("Renderer '{type}': UI panels are disabled (ImGui-Metal backend not yet "
+                     "implemented; scene renders, but no controls). Use the SDL renderer for the "
+                     "full UI.",
+                     PARAM(type, m_rendererType));
+        }
 
         // Optional: auto-start export for the whole GUI run (config-driven; default off).
         m_exportEveryN = std::max(1, TFV_CONFIG().getInt("sim.export.every_n", 1));
