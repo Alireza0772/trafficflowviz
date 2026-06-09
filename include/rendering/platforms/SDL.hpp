@@ -35,6 +35,7 @@ namespace tfv
 
         // Get window size
         void getWindowSize(int& width, int& height) const override;
+        void getDrawableSize(int& width, int& height) const override;
 
       private:
         SDL_Texture* createTextTexture(const std::string& text);

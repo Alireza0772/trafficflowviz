@@ -26,7 +26,7 @@ namespace tfv
         else if(type == "Metal")
         {
 #if defined(__APPLE__)
-            return std::make_unique<MetalRenderer>();
+            return std::make_unique<MetalRenderer>(window);
 #else
             throw std::runtime_error("Metal renderer is only supported on Apple platforms");
 #endif

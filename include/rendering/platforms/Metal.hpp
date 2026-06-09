@@ -4,10 +4,14 @@
 
 namespace tfv
 {
+    // Native Metal rendering backend (macOS). Renders everything as batched per-vertex-colored
+    // triangles through a single MSAA pipeline; the base-class vector primitives + all the draw
+    // calls funnel into fillGeometry, which appends to a per-frame vertex batch flushed at
+    // present(). Obj-C/Metal state lives behind the opaque m_res pointer.
     class MetalRenderer : public Renderer
     {
       public:
-        MetalRenderer();
+        explicit MetalRenderer(void* window); // window = SDL_Window*
         ~MetalRenderer();
 
         // Implement Renderer interface
@@ -22,14 +26,15 @@ namespace tfv
         void drawRect(int x, int y, int w, int h) override;
         void fillRect(int x, int y, int w, int h) override;
         void drawText(const std::string& text, int x, int y) override;
+        void fillGeometry(const RVertex* verts, int vcount, const int* idx, int icount) override;
         void setAntiAliasing(bool enable) override;
         void* getNativeRenderer() const override;
         void getWindowSize(int& width, int& height) const override;
+        void getDrawableSize(int& width, int& height) const override;
 
       private:
-        void* windowHandle;
-        void* m_metalView;
-        void* m_metalResources;
-        bool m_antiAliasingEnabled;
+        void* m_window{nullptr};        // SDL_Window*
+        void* m_res{nullptr};           // MetalResources* (Obj-C state)
+        bool m_antiAliasingEnabled{true};
     };
 } // namespace tfv

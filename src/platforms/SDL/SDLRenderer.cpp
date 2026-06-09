@@ -92,6 +92,14 @@ namespace tfv
         }
     }
 
+    void SDLRenderer::getDrawableSize(int& width, int& height) const
+    {
+        if(m_renderer)
+            SDL_GetRendererOutputSize(m_renderer, &width, &height); // framebuffer px (HiDPI-aware)
+        else
+            getWindowSize(width, height);
+    }
+
     void SDLRenderer::clear(uint8_t r, uint8_t g, uint8_t b, uint8_t a)
     {
         SDL_SetRenderDrawColor(m_renderer, r, g, b, a);

@@ -52,10 +52,9 @@ namespace tfv
         const float bw = std::max(1.0f, maxX - minX);
         const float bh = std::max(1.0f, maxY - minY);
 
-        // Viewport in scene (framebuffer pixel) space.
+        // Viewport in scene (framebuffer pixel) space. Backend-agnostic (SDL or Metal).
         int ow = 1280, oh = 720;
-        if(auto* sr = static_cast<SDL_Renderer*>(m_renderer->getNativeRenderer()))
-            SDL_GetRendererOutputSize(sr, &ow, &oh);
+        m_renderer->getDrawableSize(ow, oh);
 
         const float scale = 0.9f * std::min(float(ow) / bw, float(oh) / bh);
         const float cx = 0.5f * (minX + maxX);
@@ -247,11 +246,10 @@ namespace tfv
             return 1.0f;
         int ww = 0, wh = 0;
         m_renderer->getWindowSize(ww, wh); // logical points
-        auto* sr = static_cast<SDL_Renderer*>(m_renderer->getNativeRenderer());
-        if(sr && ww > 0)
+        if(ww > 0)
         {
             int rw = ww, rh = wh;
-            SDL_GetRendererOutputSize(sr, &rw, &rh); // framebuffer pixels
+            m_renderer->getDrawableSize(rw, rh); // framebuffer pixels (backend-agnostic)
             return static_cast<float>(rw) / static_cast<float>(ww);
         }
         return 1.0f;

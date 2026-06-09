@@ -90,8 +90,13 @@ namespace tfv
         // Access to underlying renderer for backend-specific operations
         virtual void* getNativeRenderer() const = 0;
 
-        // Get window size
+        // Get window size (logical points).
         virtual void getWindowSize(int& width, int& height) const = 0;
+
+        // Drawable size in framebuffer PIXELS (== window size on non-HiDPI; 2x on Retina).
+        // The scene is drawn in these coordinates. Default falls back to the logical size; the
+        // SDL backend returns SDL_GetRendererOutputSize, the Metal backend the layer drawable size.
+        virtual void getDrawableSize(int& width, int& height) const { getWindowSize(width, height); }
     };
 } // namespace tfv
 #endif

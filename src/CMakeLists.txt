@@ -78,6 +78,10 @@ set(IMGUI_SOURCES
 
 # Define library
 add_library(trafficflowviz_lib STATIC ${TRAFFICFLOWVIZ_SOURCES} ${IMGUI_SOURCES})
+# The Metal backend uses ARC for correct Obj-C/Metal object lifetime management.
+if(APPLE)
+    set_source_files_properties(platforms/Apple/MetalRenderer.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+endif()
 target_include_directories(trafficflowviz_lib PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/include
