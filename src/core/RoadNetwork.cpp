@@ -1120,6 +1120,21 @@ namespace tfv
                     s->length = L;
                 }
             }
+            // Curved segments: snap the moved centerline endpoint to the new node and rebuild
+            // (arc length, dir). The renderer AND segWorldPos both assume the centerline is
+            // anchored at its endpoints (front==fromNode, back==toNode); without this, a rewired
+            // curved arm keeps a centerline at the old node and vehicles fly off the carriageway.
+            if(s->centerline.size() >= 2)
+            {
+                if(const Node* nn = getNode(newN))
+                {
+                    if(fromMoved)
+                        s->centerline.front() = nn->pos;
+                    else
+                        s->centerline.back() = nn->pos;
+                    s->setCenterline(std::move(s->centerline)); // recompute arcLen/length/dir
+                }
+            }
             for(auto& vis : m_seg)
                 if(vis.id == sid)
                 {

@@ -708,11 +708,15 @@ namespace tfv
 
     glm::vec2 Simulation::segWorldPos(const RoadSegment& seg, float position, uint8_t laneIndex) const
     {
+        // Anchor at the curve's own first point when curved (so the absolute centerline is
+        // followed exactly as the renderer draws it, even if an endpoint was rewired); else the
+        // fromNode position for straight segments (byte-identical to the pre-curve arithmetic).
         glm::vec2 base(0.0f, 0.0f);
-        if(m_roadNetwork)
+        if(seg.centerline.size() >= 2)
+            base = seg.centerline.front();
+        else if(m_roadNetwork)
             if(const Node* n = m_roadNetwork->getNode(seg.fromNode))
                 base = n->pos;
-        // Route through the SegmentGeometry seam (straight today; curves in Phase E).
         const SegmentGeometry geom = seg.geometry();
         const float arc = position * seg.length;
         glm::vec2 p = base + geom.offsetAt(arc);
