@@ -175,10 +175,11 @@ namespace tfv
             const float cy = n->pos.y * m_scale + static_cast<float>(m_panY);
             if(n->roundaboutR > 0.0f)
             {
-                // Topological roundabout: the ring ROADS already draw the circle, so just fill
-                // the centre island inside them.
-                const float islandR = std::max(3.0f, (n->roundaboutR - laneWpx * 1.2f)) * m_scale;
-                m_r->fillCircle(cx, cy, islandR, 58, 102, 66, 255);
+                // Topological roundabout: the circular ring ROAD is drawn by its own segments;
+                // fill the centre island just inside it, leaving a visible circulating lane.
+                const float islandR = std::max(3.0f, (n->roundaboutR - laneWpx * 1.6f)) * m_scale;
+                m_r->fillCircle(cx, cy, islandR, 58, 102, 66, 255, 36); // smoother circle
+                m_r->strokeCircle(cx, cy, islandR, std::max(1.0f, m_scale), 90, 150, 100, 255, 36);
             }
             else
             {

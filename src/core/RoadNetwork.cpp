@@ -1057,9 +1057,23 @@ namespace tfv
             const float r = std::max(laneWidth * 2.5f,
                                      std::min(laneWidth * 1.1f * static_cast<float>(arms.size()),
                                               0.35f * minArm));
-            struct RingNode { uint32_t id; float ang; };
-            std::vector<RingNode> ring;
-            for(const auto& [other, segs] : arms) // map: sorted by `other` -> deterministic
+            // A proper CIRCULAR ring: K evenly-spaced nodes (so the circulating road reads as a
+            // circle, not a 3-4 sided polygon), with each arm reconnected to its NEAREST ring node.
+            const float TWO_PI = 6.2831853f;
+            const int K = std::max(12, 3 * static_cast<int>(arms.size()));
+            std::vector<uint32_t> ringIds(static_cast<std::size_t>(K));
+            for(int k = 0; k < K; ++k)
+            {
+                const float a = TWO_PI * static_cast<float>(k) / static_cast<float>(K);
+                Node nn;
+                nn.id = nextNode++;
+                nn.pos = Rc + glm::vec2(std::cos(a), std::sin(a)) * r;
+                nn.junction = JunctionStyle::RING;
+                addNode(nn);
+                ringIds[static_cast<std::size_t>(k)] = nn.id;
+            }
+            // Reconnect each arm to the nearest ring node by approach angle.
+            for(const auto& [other, segs] : arms)
             {
                 const Node* on = getNode(other);
                 if(!on)
@@ -1068,25 +1082,20 @@ namespace tfv
                 const float L = glm::length(d);
                 if(L < 1e-3f)
                     continue;
-                d /= L;
-                const uint32_t rid = nextNode++;
-                Node nn;
-                nn.id = rid;
-                nn.pos = Rc + d * r;
-                nn.junction = JunctionStyle::RING;
-                addNode(nn);
+                float ang = std::atan2(d.y, d.x);
+                if(ang < 0.0f)
+                    ang += TWO_PI;
+                int best = static_cast<int>(std::lround(ang / TWO_PI * static_cast<float>(K))) % K;
+                if(best < 0)
+                    best += K;
                 for(uint32_t sid : segs)
-                    rewire(sid, R, rid);
-                ring.push_back({rid, std::atan2(d.y, d.x)});
+                    rewire(sid, R, ringIds[static_cast<std::size_t>(best)]);
             }
-            if(ring.size() < 3)
-                continue;
-            std::sort(ring.begin(), ring.end(),
-                      [](const RingNode& a, const RingNode& b) { return a.ang < b.ang; });
-            // One-way circulating loop through the ring nodes (counter-clockwise by angle).
-            for(std::size_t i = 0; i < ring.size(); ++i)
+            // One-way circulating loop (CCW) through ALL K ring nodes -> a smooth circle road.
+            for(int k = 0; k < K; ++k)
             {
-                const uint32_t a = ring[i].id, b = ring[(i + 1) % ring.size()].id;
+                const uint32_t a = ringIds[static_cast<std::size_t>(k)];
+                const uint32_t b = ringIds[static_cast<std::size_t>((k + 1) % K)];
                 const Node* na = getNode(a);
                 const Node* nb = getNode(b);
                 if(!na || !nb)
@@ -1108,7 +1117,7 @@ namespace tfv
                 addSegment(s);
             }
             if(Node* c = getNode(R)) // re-fetch (maps may have rehashed)
-                c->roundaboutR = r;  // now isolated; the island is drawn here
+                c->roundaboutR = r;  // isolated centre; the island is drawn here
         }
     }
 
